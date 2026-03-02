@@ -64,7 +64,7 @@ class SearchUtils:
 
     def get_nba_fixtures_context(self, date_str: str):
         """Get today's NBA fixtures and major news."""
-        query = f"NBA schedule matches {"today" if date_str == datetime.now(UTC).strftime('%Y-%m-%d') else date_str} espn cbs sports"
+        query = f"NBA schedule matches {'today' if date_str == datetime.now(UTC).strftime('%Y-%m-%d') else date_str} espn cbs sports"
         return self.search_tavily(query, max_results=6)
 
     def get_nba_match_context(self, home_team: str, away_team: str, date_str: str):
