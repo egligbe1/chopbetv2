@@ -1,75 +1,60 @@
-import os
+import requests
+from bs4 import BeautifulSoup
 import logging
-from tavily import TavilyClient
-from duckduckgo_search import DDGS
 from datetime import datetime, UTC
 
 logger = logging.getLogger(__name__)
 
 class SearchUtils:
     def __init__(self):
-        self.tavily_api_key = os.getenv("TAVILY_API_KEY")
-        self.tavily_client = TavilyClient(api_key=self.tavily_api_key) if self.tavily_api_key else None
-        self.ddgs = DDGS()
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
 
-    def search_tavily(self, query: str, max_results: int = 5):
-        """Primary search using Tavily."""
-        if not self.tavily_client:
-            logger.warning("Tavily API Key not found. Falling back to DuckDuckGo.")
-            return self.search_ddg(query, max_results)
+    def get_bbc_fixtures(self, date_str: str) -> str:
+        """
+        Fetches the BBC Sport football fixtures page for a given date and
+        returns all text content for downstream extraction.
+        """
+        url = f"https://www.bbc.com/sport/football/scores-fixtures/{date_str}"
+        logger.info(f"Scraping BBC Sport fixtures from: {url}")
         
         try:
-            logger.info(f"Searching Tavily for: {query}")
-            response = self.tavily_client.search(query=query, search_depth="advanced", max_results=max_results)
-            return [
-                {
-                    "title": result.get("title"),
-                    "content": result.get("content"),
-                    "url": result.get("url")
-                }
-                for result in response.get("results", [])
-            ]
-        except Exception as e:
-            logger.error(f"Tavily search failed: {str(e)}. Falling back to DuckDuckGo.")
-            return self.search_ddg(query, max_results)
+            response = requests.get(url, headers=self.headers, timeout=15)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, "html.parser")
+            
+            # The most robust way without dealing with complex React hydration
+            # is to simply grab all text and let Gemini extract the actual matches.
+            text_content = soup.get_text(separator=' ', strip=True)
+            logger.info(f"Successfully scraped {len(text_content)} characters from BBC.")
+            
+            return text_content
+            
+        except requests.RequestException as e:
+            logger.error(f"Failed to fetch BBC fixtures: {e}")
+            return ""
 
-    def search_ddg(self, query: str, max_results: int = 5):
-        """Fallback search using DuckDuckGo."""
+    def get_goal_fixtures(self, date_str: str) -> str:
+        """
+        Fetches the Goal.com live scores page for a given date as a fallback.
+        """
+        url = f"https://www.goal.com/en-gh/live-scores/{date_str}"
+        logger.info(f"Scraping Goal.com fixtures from: {url}")
+        
         try:
-            logger.info(f"Searching DuckDuckGo for: {query}")
-            # Use DDGS with modern settings
-            with DDGS() as ddgs:
-                results = ddgs.text(query, max_results=max_results, region="wt-wt", safesearch="off", timelimit="y")
-                return [
-                    {
-                        "title": r.get("title"),
-                        "content": r.get("body"),
-                        "url": r.get("href")
-                    }
-                    for r in results
-                ]
-        except Exception as e:
-            logger.error(f"DuckDuckGo search failed: {str(e)}")
-            return []
-
-    def get_fixtures_context(self, date_str: str):
-        """Get today's fixtures and major news."""
-        query = f"football fixtures {date_str} premier league la liga bundesliga serie a ligue 1 bbc sport espn"
-        return self.search_tavily(query, max_results=8)
-
-    def get_match_context(self, home_team: str, away_team: str, date_str: str):
-        """Get specific match details: form, injuries, team news."""
-        query = f"{home_team} vs {away_team} match preview team news injuries form {date_str} sky sports"
-        return self.search_tavily(query, max_results=3)
-
-    def get_nba_fixtures_context(self, date_str: str):
-        """Get today's NBA fixtures and major news."""
-        query = f"NBA schedule matches {'today' if date_str == datetime.now(UTC).strftime('%Y-%m-%d') else date_str} espn cbs sports"
-        return self.search_tavily(query, max_results=6)
-
-    def get_nba_match_context(self, home_team: str, away_team: str, date_str: str):
-        """Get specific NBA match details: injuries, starting lineups, form."""
-        query = f"{home_team} vs {away_team} NBA match preview injury report starting lineups {date_str} action network covers"
-        return self.search_tavily(query, max_results=3)
+            response = requests.get(url, headers=self.headers, timeout=15)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, "html.parser")
+            text_content = soup.get_text(separator=' ', strip=True)
+            logger.info(f"Successfully scraped {len(text_content)} characters from Goal.com.")
+            
+            return text_content
+            
+        except requests.RequestException as e:
+            logger.error(f"Failed to fetch Goal.com fixtures: {e}")
+            return ""
 
 search_utils = SearchUtils()

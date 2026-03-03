@@ -18,15 +18,111 @@ logger = logging.getLogger(__name__)
 
 # Configure Gemini Client
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+FALLBACK_GEMINI_API_KEY = os.getenv("FALLBACK_GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
+
+def batch_check_results(date_str: str, matches: list) -> dict:
+    """
+    Sends the BBC text for a specific date to Gemini to retrieve
+    the HT and FT scores for a given list of matches in one shot.
+    """
+    from search_utils import search_utils
+    bbc_text = search_utils.get_bbc_fixtures(date_str) or ""
+    goal_text = search_utils.get_goal_fixtures(date_str) or ""
+    
+    combined_text = bbc_text[:20000] + "\n\n---\n\n" + goal_text[:20000]
+    
+    if len(combined_text) < 100:
+        logger.error(f"Failed to fetch results text for {date_str}.")
+        return {}
+
+    matches_list = "\n".join([f"- {m}" for m in matches])
+    
+    prompt = f"""
+    You are a professional sports results verifier.
+    Below is the raw text scraped from the BBC Sport fixtures/results page for {date_str}.
+    
+    YOUR TASK:
+    Find the actual, fully completed Half Time (HT) and Full Time (FT) scores for ONLY the following matches:
+    {matches_list}
+    
+    RAW MATCH RESULTS TEXT:
+    {combined_text}
+    
+    OUTPUT REQUIREMENTS:
+    Return ONLY a JSON object mapping the match string to its results.
+    Format exactly like this (If a match is postponed or hasn't finished, omit it or set scores to null):
+    {{
+        "Arsenal vs Chelsea": {{
+            "ht_home": 1, "ht_away": 0, "ft_home": 2, "ft_away": 1 
+        }}
+    }}
+    """
+    
+    schema = {
+        "type": "OBJECT",
+        "properties": {
+            "results": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "match": {"type": "STRING"},
+                        "ht_home": {"type": "INTEGER", "nullable": True},
+                        "ht_away": {"type": "INTEGER", "nullable": True},
+                        "ft_home": {"type": "INTEGER", "nullable": True},
+                        "ft_away": {"type": "INTEGER", "nullable": True},
+                        "status_note": {"type": "STRING", "nullable": True},
+                    },
+                    # Only match is required. Score fields are null if match isn't finished.
+                    "required": ["match"]
+                }
+            }
+        },
+        "required": ["results"]
+    }
+    
+    import time
+    global client
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=schema,
+                )
+            )
+            data = json.loads(response.text.strip())
+            results = data.get("results", [])
+            
+            # Convert list back to match map for easier lookup downstream
+            return {r["match"]: r for r in results if "match" in r}
+        except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                if attempt == 0 and FALLBACK_GEMINI_API_KEY:
+                    logger.warning("Primary quota exhausted. Switching to fallback Gemini API key.")
+                    client = genai.Client(api_key=FALLBACK_GEMINI_API_KEY)
+                    continue
+                if attempt < max_retries - 1:
+                    sleep_time = 2 ** attempt * 10
+                    logger.warning(f"Rate limited (429). Retrying in {sleep_time} seconds (Attempt {attempt+1}/{max_retries})...")
+                    time.sleep(sleep_time)
+                    continue
+            logger.error(f"Error checking results for {date_str}: {e}")
+            return {}
+    return {}
+
 
 def check_results():
     """
-    Queries the database for pending predictions, uses Gemini 
-    with Search Grounding to find final scores, then updates prediction 
-    statuses and computes daily accuracy stats.
+    Queries the database for pending predictions, pulls BBC results for 
+    the relevant dates, and uses Gemini to find final scores in batches, 
+    then updates prediction statuses and computes daily accuracy stats.
     """
-    logger.info("Starting evening results checking process (v2 - Strict Research)...")
+    logger.info("Starting evening results checking process (v3 - BBC Batch Scraper)...")
     db = SessionLocal()
     
     try:
@@ -37,84 +133,64 @@ def check_results():
             logger.info("No pending predictions to check.")
             return
 
-        # Build a list of matches to check
-        matches_to_check = []
+        # Group matches by date
+        matches_by_date = {}
         for p in pending:
-            match_str = f"{p.home_team} vs {p.away_team} ({p.league}, Date: {p.date.strftime('%Y-%m-%d')})"
-            if match_str not in matches_to_check:
-                matches_to_check.append(match_str)
+            d_str = p.date.strftime("%Y-%m-%d")
+            match_str = f"{p.home_team} vs {p.away_team}"
+            if d_str not in matches_by_date:
+                matches_by_date[d_str] = []
+            if match_str not in [m["match_str"] for m in matches_by_date[d_str]]:
+                 matches_by_date[d_str].append({"match_str": match_str, "predictions": [p]})
+            else:
+                 # Add this prediction to the existing match group
+                 for m in matches_by_date[d_str]:
+                     if m["match_str"] == match_str:
+                         m["predictions"].append(p)
 
-        from search_utils import search_utils
-        logger.info(f"Gathering search context for {len(matches_to_check)} matches...")
-        search_contexts = []
-        for match_str in matches_to_check:
-            ctx = search_utils.search_tavily(f"final score result {match_str}", max_results=3)
-            search_contexts.append({"match": match_str, "context": ctx})
+        logger.info(f"Checking {len(pending)} pending predictions across {len(matches_by_date)} dates.")
 
-        prompt = f"""
-        You are a football results processor. Use the provided SEARCH CONTEXT to find the ACTUAL FINAL scores for these matches:
-        {json.dumps(matches_to_check)}
-        
-        SEARCH CONTEXT:
-        {json.dumps(search_contexts)}
-        
-        STRICT REQUIREMENTS:
-        1. Find accurate Half-Time (HT) and Full-Time (FT) scores.
-        2. If a match was postponed or cancelled, mark score as null or -1.
-        
-        OUTPUT FORMAT:
-        Return a JSON object with a "results" key containing an array of objects. Each object MUST have:
-        - match: the original match string provided
-        - ht_score_home: integer
-        - ht_score_away: integer
-        - ft_score_home: integer
-        - ft_score_away: integer
-        - status: "finished" or "postponed"
-        
-        Important: Return ONLY the JSON object. No markdown, no preamble.
-        """
-
-        response = client.models.generate_content(
-            model="gemini-flash-latest",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
-            )
-        )
-
-        if not response or not response.text:
-            logger.error("Failed to get results from Gemini.")
-            return
-
-        raw_text = response.text.strip()
-        data = json.loads(raw_text)
-        results_data = data.get("results", []) if isinstance(data, dict) else data
-
-        # Map results back to predictions
-        results_map = {r["match"]: r for r in results_data if "match" in r}
-        
-        for p in pending:
-            match_str = f"{p.home_team} vs {p.away_team} ({p.league}, Date: {p.date.strftime('%Y-%m-%d')})"
-            res = results_map.get(match_str)
+        for date_str, match_groups in matches_by_date.items():
+            matches_to_check = [m["match_str"] for m in match_groups]
             
-            if not res or res.get("status") == "postponed":
-                p.status = "void"
+            logger.info(f"Gathering results from BBC for {len(matches_to_check)} matches on {date_str}...")
+            batch_results = batch_check_results(date_str, matches_to_check)
+            
+            if not batch_results:
+                logger.warning(f"No results returned for {date_str}.")
                 continue
-
-            # Check if result already exists
-            existing = db.query(Result).filter(Result.prediction_id == p.id).first()
-            if not existing:
-                new_result = Result(
-                    prediction_id=p.id,
-                    ht_score_home=res["ht_score_home"],
-                    ht_score_away=res["ht_score_away"],
-                    ft_score_home=res["ft_score_home"],
-                    ft_score_away=res["ft_score_away"]
-                )
-                db.add(new_result)
                 
-                # Evaluate prediction
-                p.status = _evaluate_prediction(p, res["ht_score_home"], res["ht_score_away"], res["ft_score_home"], res["ft_score_away"])
+            for m_group in match_groups:
+                match_str = m_group["match_str"]
+                if match_str in batch_results:
+                    res = batch_results[match_str]
+                    ht_h, ht_a = res.get("ht_home"), res.get("ht_away")
+                    ft_h, ft_a = res.get("ft_home"), res.get("ft_away")
+                    
+                    if None not in (ht_h, ht_a, ft_h, ft_a):
+                        for p in m_group["predictions"]:
+                             # Save actual result details in the Results table
+                             existing = db.query(Result).filter(Result.prediction_id == p.id).first()
+                             if not existing:
+                                 new_result = Result(
+                                     prediction_id=p.id,
+                                     ht_score_home=ht_h,
+                                     ht_score_away=ht_a,
+                                     ft_score_home=ft_h,
+                                     ft_score_away=ft_a
+                                 )
+                                 db.add(new_result)
+                             else:
+                                 # Update existing result if it was re-checked
+                                 existing.ht_score_home = ht_h
+                                 existing.ht_score_away = ht_a
+                                 existing.ft_score_home = ft_h
+                                 existing.ft_score_away = ft_a
+                                 
+                             p.status = _evaluate_prediction(p, ht_h, ht_a, ft_h, ft_a)
+                             logger.info(f"Updated {match_str} ({p.market}): HT {ht_h}-{ht_a}, FT {ft_h}-{ft_a} -> {p.status}")
+                    else:
+                        logger.info(f"Scores not yet available for {match_str}, keeping as pending.")
 
         db.commit()
         
@@ -151,7 +227,9 @@ def _evaluate_prediction(prediction: Prediction, ht_home: int, ht_away: int,
 
         elif market == "BTTS":
             both_scored = (ft_home or 0) > 0 and (ft_away or 0) > 0
-            if pred_value.lower() == "yes":
+            # Normalize: "BTTS Yes" -> "yes", "BTTS No" -> "no", "Yes" -> "yes"
+            pv_normalized = pred_value.lower().replace("btts", "").strip()
+            if pv_normalized == "yes":
                 return "won" if both_scored else "lost"
             else:
                 return "won" if not both_scored else "lost"

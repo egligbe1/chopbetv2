@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Configure Gemini Client
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+FALLBACK_GEMINI_API_KEY = os.getenv("FALLBACK_GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def _generate_with_fallback(prompt: str):
@@ -44,149 +45,172 @@ def _generate_with_fallback(prompt: str):
             raise
 
 
-def extract_fixtures_from_search(search_results, today_str):
-    """Uses Gemini to extract a clean list of 10-15 fixtures from rough search results."""
-    prompt = f"""
-    The following are search results for football fixtures on {today_str}.
-    Extract exactly 10 to 15 REAL, SCHEDULED matches for today.
-    Format your response as a JSON array of objects with "home_team" and "away_team" keys.
-    Only include major European leagues (EPL, La Liga, Serie A, Bundesliga, Ligue 1).
-    
-    Search Results:
-    {json.dumps(search_results)}
+def batch_analyze_fixtures(bbc_text, today_str):
     """
-    
-    try:
-        response = _generate_with_fallback(prompt)
-        
-        raw_text = response.text.strip()
-        if "```json" in raw_text:
-            raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in raw_text:
-            raw_text = raw_text.split("```")[1].split("```")[0].strip()
-            
-        fixtures = json.loads(raw_text)
-        if isinstance(fixtures, dict) and "fixtures" in fixtures:
-            return fixtures["fixtures"]
-        return fixtures if isinstance(fixtures, list) else []
-    except Exception as e:
-        logger.error(f"Error extracting fixtures: {e}")
-        return []
-
-def analyze_matches(bundled_context, today_str):
-    """
-    Final analysis stage: feeds search context into Gemini for structured predictions.
+    Sends the raw BBC text to Gemini in ONE prompt to both extract fixtures 
+    and provide predictions for all of them simultaneously.
     """
     prompt = f"""
     You are a professional football data scientist. Today is {today_str}.
-    Based on the SEARCH CONTEXT provided below, generate high-confidence predictions for each match.
+    Below is the raw text scraped from the BBC Sport fixtures page for today.
     
-    SEARCH CONTEXT (Real data on form, injuries, team news):
-    {bundled_context}
+    TASK:
+    1. Identify ALL REAL, SCHEDULED football matches for today from the raw text. Include as many matches as you can accurately extract from the text.
+    2. For EACH identified match, generate a high-confidence prediction. Use your extensive general knowledge about the teams' current form, injuries, and historical performance.
     
-    REQUIREMENTS:
-    1. Output MUST be valid JSON.
-    2. Zero Hallucination: Use ONLY the provided context to justify reasoning.
-    3. Include realistic decimal odds.
+    RAW BBC TEXT:
+    {bbc_text[:30000]} # Truncated to avoid massive context sizes, though Gemini 1.5 handles it easily.
     
-    OUTPUT FORMAT:
-    Return a JSON object with a "predictions" key containing an array. Each object MUST have:
+    OUTPUT FORMAT REQUIREMENTS:
+    Return ONLY a JSON object with a "predictions" key containing an array. Each object MUST have:
     - date: "{today_str}"
     - home_team: string
     - away_team: string
     - league: string
     - country: string
-    - kickoff_time: ISO 8601 string in UTC
-    - market: string ("HT Over 0.5", "Total Over 1.5", "BTTS", "1X2")
+    - kickoff_time: ISO 8601 string in UTC (or best estimate if not found)
+    - market: string (Choose one: "HT Over 0.5", "Total Over 1.5", "BTTS", "1X2")
     - prediction: string
     - confidence: integer (0-100)
-    - odds: float
-    - source_link: string (The URL from context where info was found)
-    - reasoning: string (2-3 sentences based on stats in context)
-    - risk_rating: string
+    - odds: float (Realistic decimal odds)
+    - source_link: "https://www.bbc.com/sport/football"
+    - reasoning: string (2-3 sentences justifying the prediction based on typical form/stats)
+    - risk_rating: string ("low", "medium", "high")
+    
+    Ensure the output is strictly valid JSON without markdown wrapping.
     """
     
-    try:
-        response = client.models.generate_content(
-            model="gemini-flash-latest",
-            contents=prompt,
-        )
-        
-        raw_text = response.text.strip()
-        if "```json" in raw_text:
-            raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in raw_text:
-            raw_text = raw_text.split("```")[1].split("```")[0].strip()
-            
-        return json.loads(raw_text)
-    except Exception as e:
-        logger.error(f"Error in final analysis: {e}")
-        return None
+    schema = {
+        "type": "OBJECT",
+        "properties": {
+            "predictions": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "date": {"type": "STRING"},
+                        "home_team": {"type": "STRING"},
+                        "away_team": {"type": "STRING"},
+                        "league": {"type": "STRING"},
+                        "country": {"type": "STRING"},
+                        "kickoff_time": {"type": "STRING"},
+                        "market": {"type": "STRING"},
+                        "prediction": {"type": "STRING"},
+                        "confidence": {"type": "INTEGER"},
+                        "odds": {"type": "NUMBER"},
+                        "source_link": {"type": "STRING"},
+                        "reasoning": {"type": "STRING"},
+                        "risk_rating": {"type": "STRING"}
+                    },
+                    "required": ["date", "home_team", "away_team", "league", "country", "kickoff_time", "market", "prediction", "confidence", "odds", "source_link", "reasoning", "risk_rating"]
+                }
+            }
+        },
+        "required": ["predictions"]
+    }
+    
+    import time
+    global client
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash", 
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=schema,
+                ),
+            )
+            raw_text = response.text.strip()
+            return json.loads(raw_text)
+        except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                if attempt == 0 and FALLBACK_GEMINI_API_KEY:
+                    logger.warning("Primary quota exhausted. Switching to fallback Gemini API key.")
+                    client = genai.Client(api_key=FALLBACK_GEMINI_API_KEY)
+                    continue
+                if attempt < max_retries - 1:
+                    sleep_time = 2 ** attempt * 10
+                    logger.warning(f"Rate limited (429). Retrying in {sleep_time} seconds (Attempt {attempt+1}/{max_retries})...")
+                    time.sleep(sleep_time)
+                    continue
+            logger.error(f"Error in batch analysis: {e}")
+            return None
+    return None
 
 def generate_predictions():
     """
-    Orchestrates the Search-First prediction flow.
+    Orchestrates the single-shot batch prediction flow using BBC data.
     """
-    logger.info("Starting prediction generation engine (v4 - External Search Grounding)...")
+    logger.info("Starting prediction generation engine (v5 - BBC Scraper Batch)...")
     db = SessionLocal()
     today_str = datetime.now(UTC).strftime("%Y-%m-%d")
     
     try:
-        # 1. Get Fixtures
-        fixtures_raw = search_utils.get_fixtures_context(today_str)
-        if not fixtures_raw:
-            logger.error("No fixtures found in search.")
+        # 1. Get raw BBC Fixtures text
+        all_preds = []
+        bbc_text = search_utils.get_bbc_fixtures(today_str)
+        if bbc_text and len(bbc_text) > 100:
+            logger.info("Sending batch request to Gemini for BBC fixtures extraction and prediction...")
+            results = batch_analyze_fixtures(bbc_text, today_str)
+            if results and "predictions" in results:
+                all_preds.extend(results["predictions"])
+        else:
+            logger.warning("Failed to fetch meaningful BBC fixtures text.")
+
+        import time
+        logger.info("Waiting 15 seconds before processing Goal.com to prevent rapid API calls...")
+        time.sleep(15)
+
+        # 2. Scrape Goal.com to combine fixtures
+        logger.info("Scraping Goal.com for additional fixtures...")
+        goal_text = search_utils.get_goal_fixtures(today_str)
+        if goal_text and len(goal_text) > 100:
+            logger.info("Sending batch request to Gemini for Goal.com extraction...")
+            goal_results = batch_analyze_fixtures(goal_text, today_str)
+            if goal_results and "predictions" in goal_results:
+                all_preds.extend(goal_results["predictions"])
+
+        if not all_preds:
+            logger.error("Batch analysis failed to produce predictions from any source.")
             return
 
-        # 2. Extract structured list
-        fixtures_list = extract_fixtures_from_search(fixtures_raw, today_str)
-        if not fixtures_list:
-            logger.error("Failed to extract structured fixtures.")
-            return
-            
-        logger.info(f"Extracted {len(fixtures_list)} real fixtures.")
-
-        # 3. Gather Context per Match
-        bundled_context = []
-        # Limit to 10 to stay within search tier safety
-        for match in fixtures_list[:10]:
-            home, away = match.get("home_team"), match.get("away_team")
-            if not home or not away: continue
-            
-            logger.info(f"Gathering context for: {home} vs {away}")
-            ctx = search_utils.get_match_context(home, away, today_str)
-            bundled_context.append({
-                "match": f"{home} vs {away}",
-                "search_data": ctx
-            })
-
-        # 4. Final Analysis
-        if not bundled_context:
-            logger.error("No match context gathered.")
-            return
-            
-        results = analyze_matches(json.dumps(bundled_context), today_str)
-        if not results or "predictions" not in results:
-            logger.error("Final analysis failed to produce predictions.")
-            return
-
-        # 5. Save to Database
+        # 3. Save to Database
         saved_count = 0
         duplicate_count = 0
-        for p_data in results["predictions"]:
+        
+        logger.info(f"Gemini returned {len(all_preds)} total predictions.")
+        
+        for p_data in all_preds:
             try:
-                p_date = datetime.fromisoformat(p_data["date"])
+                p_date_str = p_data["date"]
+                p_date = datetime.fromisoformat(p_date_str) if "T" in p_date_str else datetime.strptime(p_date_str, "%Y-%m-%d").replace(tzinfo=UTC)
                 home = p_data["home_team"]
                 away = p_data["away_team"]
                 market = p_data["market"]
+                
+                # Handle kickoff time which might just be '14:00' or '14:00:00Z'
+                ko_str = p_data.get("kickoff_time", "00:00")
+                if "T" in ko_str:
+                    ko_time = datetime.fromisoformat(ko_str.replace("Z", "+00:00"))
+                else:
+                    # just a time
+                    ko_clean = ko_str.replace("Z", "")
+                    parts = ko_clean.split(":")
+                    if len(parts) == 2: 
+                        ko_clean += ":00"
+                    elif len(parts) == 1:
+                        ko_clean = "00:00:00"
+                    ko_time = datetime.fromisoformat(f"{p_date_str[:10]}T{ko_clean}+00:00")
 
-                # Check for duplicate
+                # Check for duplicate strictly
+                from sqlalchemy import func, cast, Date
                 existing = db.query(Prediction).filter(
                     and_(
-                        Prediction.home_team == home,
-                        Prediction.away_team == away,
-                        Prediction.date == p_date,
-                        Prediction.market == market
+                        func.lower(Prediction.home_team) == home.lower(),
+                        func.lower(Prediction.away_team) == away.lower(),
+                        cast(Prediction.date, Date) == p_date.date()
                     )
                 ).first()
 
@@ -200,12 +224,12 @@ def generate_predictions():
                     away_team=away,
                     league=p_data["league"],
                     country=p_data["country"],
-                    kickoff_time=datetime.fromisoformat(p_data["kickoff_time"]),
+                    kickoff_time=ko_time,
                     market=market,
                     prediction=p_data["prediction"],
                     confidence=p_data["confidence"],
                     odds=p_data.get("odds", 1.5),
-                    source_link=p_data.get("source_link"),
+                    source_link=p_data.get("source_link", "https://www.bbc.com/sport/football"),
                     reasoning=p_data["reasoning"],
                     risk_rating=p_data["risk_rating"],
                     status="pending"
@@ -213,11 +237,11 @@ def generate_predictions():
                 db.add(prediction)
                 saved_count += 1
             except Exception as e:
-                logger.warning(f"Skipping invalid prediction data: {e}")
+                logger.warning(f"Skipping invalid prediction data format: {e}")
                 continue
                 
         db.commit()
-        logger.info(f"Successfully processed {saved_count} predictions. Skipped {duplicate_count} duplicates.")
+        logger.info(f"Successfully saved {saved_count} new predictions. Skipped {duplicate_count} duplicates.")
 
     except Exception as e:
         logger.error(f"Engine failure: {str(e)}")

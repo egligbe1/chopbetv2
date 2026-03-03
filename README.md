@@ -1,107 +1,150 @@
-# ChopBet - AI-Powered Sports Prediction Platform
+# ⚽ ChopBet — AI-Powered Football Prediction Platform
 
-ChopBet is a professional-grade prediction platform that uses Google Gemini API with Search Grounding to research and predict outcomes for **Football** (EPL, La Liga, Serie A, Bundesliga, Ligue 1) and **Basketball** (NBA).
+ChopBet uses **Google Gemini AI** to analyze daily football fixtures from BBC Sport and Goal.com, generating high-confidence match predictions with automated result tracking.
 
-## 🏗️ Architecture
+## Architecture
 
-- **Backend**: Python with FastAPI + APScheduler
-- **Database**: PostgreSQL with SQLAlchemy ORM
-- **Frontend**: Next.js 16 (App Router) with Tailwind CSS & React
-- **AI Engine**: Google Gemini Flash (latest) with Search Grounding
-- **Search**: Tavily API + DuckDuckGo fallback
-- **Deployment Ready**: Includes CORS, rate limiting, and security headers
+```
+chop-bet2/
+├── backend/          # FastAPI + Python
+│   ├── main.py             # App entry point, middleware, CORS
+│   ├── gemini_engine.py    # Gemini AI prediction engine
+│   ├── results_checker.py  # Automated result verification
+│   ├── scheduler.py        # APScheduler cron jobs
+│   ├── search_utils.py     # BBC & Goal.com scrapers
+│   ├── models.py           # SQLAlchemy ORM models
+│   ├── database.py         # DB engine & session config
+│   └── routes/
+│       ├── predictions.py  # /predictions/* endpoints
+│       ├── stats.py        # /stats/* endpoints
+│       └── admin.py        # /admin/* endpoints
+├── frontend/         # Next.js 16 + React 19
+│   ├── app/
+│   │   ├── page.tsx        # Home — today's predictions
+│   │   ├── stats/          # Performance analytics
+│   │   ├── results/        # Historical results browser
+│   │   ├── admin/          # Admin dashboard
+│   │   └── about/          # About page
+│   ├── components/         # Reusable UI components
+│   └── lib/api.ts          # API client with retry logic
+└── README.md
+```
 
-## 🚀 Getting Started
+| Layer | Tech |
+|-------|------|
+| **Backend** | Python · FastAPI · SQLAlchemy · APScheduler |
+| **AI Engine** | Google Gemini 2.5 Flash (structured JSON output) |
+| **Database** | PostgreSQL (Neon) with Alembic migrations |
+| **Frontend** | Next.js 16 · React 19 · Tailwind CSS 4 · Recharts |
+| **Data Sources** | BBC Sport · Goal.com |
+
+## Getting Started
 
 ### Prerequisites
 
 - Python 3.10+
 - Node.js 18+
-- PostgreSQL
+- PostgreSQL database (e.g. [Neon](https://neon.tech))
+- [Google Gemini API key](https://aistudio.google.com/apikey)
 
-### Backend Setup
+### Backend
 
-1. Navigate to the `backend` directory:
-   ```bash
-   cd backend
-   ```
-2. Create a virtual environment and activate it:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Configure environment variables in `.env` (copy from `.env.example`).
-5. Run database migrations:
-   ```bash
-   alembic upgrade head
-   ```
-6. Start the FastAPI server:
-   ```bash
-   uvicorn main:app --reload
-   ```
+```bash
+cd backend
+python -m venv venv
+venv\Scripts\activate        # Windows
+# source venv/bin/activate   # macOS/Linux
+pip install -r requirements.txt
+alembic upgrade head
+uvicorn main:app --reload
+```
 
-### Frontend Setup
+Create a `backend/.env` file:
 
-1. Navigate to the `frontend` directory:
-   ```bash
-   cd frontend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Configure environment variables in `.env.local` (copy from `.env.local.example`).
-4. Start the development server:
-   ```bash
-   npm run dev
-   ```
+```env
+DATABASE_URL=postgresql://user:pass@host/dbname
+GEMINI_API_KEY=your_gemini_api_key
+FALLBACK_GEMINI_API_KEY=optional_backup_key
+ADMIN_API_KEY=your_admin_secret
+TAVILY_API_KEY=your_tavily_key
+FRONTEND_URL=http://localhost:3000
+ENV=development
+PORT=8000
+```
 
-## 🛠️ Features
+### Frontend
 
-### Prediction Engines
-- **Football Predictions**: Runs daily at 7:00 AM UTC
-  - Supports: EPL, La Liga, Serie A, Bundesliga, Ligue 1
-  - Markets: HT Over 0.5, Total Over 1.5/2.5, BTTS, 1X2
-  
-- **NBA Predictions**: Runs daily at 7:05 AM UTC  
-  - Markets: Moneyline, Spread, Total Over/Under
-  - Analyzes injuries, lineups, form
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-### Core Features
-- **Real-Time Context**: Uses Gemini + Search Grounding to analyze live match data
-- **Accuracy Tracking**: Daily stats per sport, league, and market type
-- **Accumulator Cards**: Top 5 highest-confidence predictions bundled
-- **Admin Dashboard**: Manually trigger predictions and results checks
-- **Sport Toggle**: Frontend switches between Football and NBA data
-- **Automated Results**: Final score verification at 11:00 PM UTC
-- **Rate Limiting**: 60 requests/minute per IP (configurable)
+Create a `frontend/.env.local` file:
 
-## ⚖️ Disclaimer
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
 
-Predictions are generated by AI for informational purposes only. No financial advice provided. Use at your own risk.
+## Features
 
-## 📝 Recent Updates (March 2026)
+### Prediction Engine
+- Scrapes daily fixtures from **BBC Sport** and **Goal.com**
+- Sends fixtures to **Gemini 2.5 Flash** for batch analysis
+- Generates predictions with confidence scores, odds, and reasoning
+- Deduplicates across sources before saving
+- Markets: HT Over 0.5, Total Over 1.5, BTTS, 1X2
 
-### ✅ Basketball (NBA) Support - Fully Integrated
-- Added automatic NBA prediction generation (7:05 AM UTC)
-- Separate admin panel triggers for Football vs NBA
-- Frontend sport toggle for easy switching
-- Separate results checking logic for basketball metrics
+### Automated Scheduling
+| Job | Time (UTC) | Description |
+|-----|-----------|-------------|
+| Predictions | 07:00 | Generate daily football predictions |
+| Results | 23:00 | Verify match outcomes via Google Search |
 
-### ✅ Dependencies Analysis & Fixes
-- Updated `requirements.txt` with missing packages (tavily, google-genai, ddgs)
-- All imports verified and working
-- Integration test suite added
+### Admin Dashboard
+- Manually trigger prediction generation
+- Manually trigger results checking
+- Clear pending predictions
+- Protected by `X-Admin-Key` header
 
-### ✅ Testing Verified
-- ✓ Database connection (20 sample predictions loaded)
-- ✓ Gemini API functional
-- ✓ Search utilities (Tavily + DuckDuckGo)
-- ✓ All 17 API routes loaded
-- ✓ Frontend dependencies installed
+### Analytics
+- Overall accuracy tracking
+- Breakdown by league and market type
+- Daily accuracy trend charts
+- Win streak tracking
 
-See [TESTING_AND_FIXES_REPORT.md](TESTING_AND_FIXES_REPORT.md) for detailed analysis.
+### Frontend UX
+- Daily accumulator card (top 5 picks)
+- Predictions grouped by league
+- Historical results browser with date picker
+- Background auto-refresh with retry on failure
+- Responsive, dark-themed glassmorphism design
+
+## API Endpoints
+
+### Predictions
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/predictions/today` | Today's predictions |
+| `GET` | `/predictions/date/{date}` | Predictions by date |
+| `GET` | `/predictions/accumulator` | Daily top-5 accumulator |
+| `GET` | `/predictions/history` | Paginated history |
+
+### Stats
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/stats/accuracy` | Overall accuracy stats |
+| `GET` | `/stats/accuracy/league` | Accuracy by league |
+| `GET` | `/stats/accuracy/market` | Accuracy by market |
+| `GET` | `/stats/daily` | Daily chart data |
+
+### Admin
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/admin/trigger-predictions` | Run prediction engine |
+| `POST` | `/admin/trigger-results` | Run results checker |
+| `POST` | `/admin/clear-pending` | Delete pending predictions |
+
+## Disclaimer
+
+Predictions are AI-generated for informational purposes only. Not financial advice. Use at your own risk.

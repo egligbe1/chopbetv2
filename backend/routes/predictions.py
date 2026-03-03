@@ -1,10 +1,13 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_
 from datetime import datetime, UTC, timedelta
 from typing import Optional
 from database import get_db
 from models import Prediction as PredictionModel
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
 
@@ -19,7 +22,7 @@ def get_daily_accumulator(sport: str = Query("football", description="Sport to f
     start_of_day = datetime(today.year, today.month, today.day, tzinfo=UTC) - timedelta(hours=1)
     end_of_day = start_of_day + timedelta(days=1, hours=2)
 
-    top_picks = db.query(PredictionModel).filter(
+    top_picks = db.query(PredictionModel).options(joinedload(PredictionModel.result)).filter(
         and_(
             PredictionModel.date >= start_of_day,
             PredictionModel.date < end_of_day,
@@ -49,7 +52,7 @@ def get_today_predictions(sport: str = Query("football", description="Sport to f
     start_of_day = datetime(today.year, today.month, today.day, tzinfo=UTC) - timedelta(hours=1)
     end_of_day = start_of_day + timedelta(days=1, hours=2)
 
-    predictions = db.query(PredictionModel).filter(
+    predictions = db.query(PredictionModel).options(joinedload(PredictionModel.result)).filter(
         and_(
             PredictionModel.date >= start_of_day,
             PredictionModel.date < end_of_day,
