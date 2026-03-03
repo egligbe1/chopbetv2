@@ -128,7 +128,7 @@ export default function HomePage() {
       </div>
 
       {/* Accumulator Section */}
-      {accumulator && accumulator.predictions.length > 0 && (
+      {accumulator?.predictions?.length > 0 && (
         <AccumulatorCard
           predictions={accumulator.predictions}
           totalOdds={accumulator.total_odds}
