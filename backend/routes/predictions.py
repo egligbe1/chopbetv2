@@ -15,33 +15,50 @@ router = APIRouter(prefix="/predictions", tags=["predictions"])
 @router.get("/accumulator")
 def get_daily_accumulator(sport: str = Query("football", description="Sport to fetch accumulator for"), db: Session = Depends(get_db)):
     """
-    Get a curated accumulator of the 5 highest-confidence predictions for today.
+    Get a curated accumulator for today.
+    Starts with the 5 highest-confidence picks and keeps adding more (up to 15)
+    until total odds reach the 10.00–200.00 target range.
     """
+    MIN_ODDS = 10.0
+    MAX_ODDS = 200.0
+    MIN_PICKS = 5
+    MAX_PICKS = 15
+
     today = datetime.now(UTC).date()
-    # Broaden range slightly to catch today's generated picks
     start_of_day = datetime(today.year, today.month, today.day, tzinfo=UTC) - timedelta(hours=1)
     end_of_day = start_of_day + timedelta(days=1, hours=2)
 
-    top_picks = db.query(PredictionModel).options(joinedload(PredictionModel.result)).filter(
+    candidates = db.query(PredictionModel).options(joinedload(PredictionModel.result)).filter(
         and_(
             PredictionModel.date >= start_of_day,
             PredictionModel.date < end_of_day,
             PredictionModel.sport == sport
         )
-    ).order_by(PredictionModel.confidence.desc()).limit(5).all()
+    ).order_by(PredictionModel.confidence.desc()).limit(MAX_PICKS).all()
 
-    if not top_picks:
+    if not candidates:
         return {"accumulator": None, "total_odds": 0}
 
+    # Start with MIN_PICKS, grow until odds hit the floor or we run out
+    selected = candidates[:MIN_PICKS]
     total_odds = 1.0
-    for p in top_picks:
+    for p in selected:
         total_odds *= (p.odds or 1.0)
+
+    for extra in candidates[MIN_PICKS:]:
+        if total_odds >= MIN_ODDS:
+            break
+        selected.append(extra)
+        total_odds *= (extra.odds or 1.0)
+        # Safety cap — don't let odds balloon past ceiling
+        if total_odds > MAX_ODDS:
+            break
 
     return {
         "date": today.isoformat(),
         "total_odds": round(total_odds, 2),
-        "count": len(top_picks),
-        "predictions": [_serialize_prediction(p) for p in top_picks]
+        "count": len(selected),
+        "predictions": [_serialize_prediction(p) for p in selected]
     }
 
 

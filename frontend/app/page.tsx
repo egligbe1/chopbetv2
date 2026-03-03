@@ -96,13 +96,29 @@ export default function HomePage() {
     return acc;
   }, {} as Record<string, Prediction[]>);
 
+  // Sort leagues with top ones first
+  const LEAGUE_PRIORITY = [
+    'Premier League', 'Champions League', 'La Liga', 'Serie A',
+    'Bundesliga', 'Ligue 1', 'Europa League'
+  ];
+
+  const sortedLeagueEntries = Object.entries(groupedPredictions).sort(([leagueA], [leagueB]) => {
+    const idxA = LEAGUE_PRIORITY.findIndex(l => leagueA.toLowerCase().includes(l.toLowerCase()));
+    const idxB = LEAGUE_PRIORITY.findIndex(l => leagueB.toLowerCase().includes(l.toLowerCase()));
+
+    if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+    if (idxA !== -1) return -1;
+    if (idxB !== -1) return 1;
+    return leagueA.localeCompare(leagueB);
+  });
+
   const marketsCount = predictions.reduce((acc, p) => {
     acc[p.market] = (acc[p.market] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-14">
       {/* Hero Section */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div className="space-y-1">
@@ -128,7 +144,7 @@ export default function HomePage() {
       </div>
 
       {/* Accumulator Section */}
-      {accumulator?.predictions?.length > 0 && (
+      {accumulator != null && (accumulator.predictions?.length ?? 0) > 0 && (
         <AccumulatorCard
           predictions={accumulator.predictions}
           totalOdds={accumulator.total_odds}
@@ -137,7 +153,7 @@ export default function HomePage() {
       )}
 
       {/* Summary Dashboard */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <SummaryCard
           icon={<Trophy className="text-primary" />}
           label="Total Picks"
@@ -165,9 +181,9 @@ export default function HomePage() {
       </div>
 
       {/* Content Area */}
-      {Object.keys(groupedPredictions).length > 0 ? (
-        <div className="space-y-12">
-          {Object.entries(groupedPredictions).map(([league, preds]) => (
+      {sortedLeagueEntries.length > 0 ? (
+        <div className="space-y-14">
+          {sortedLeagueEntries.map(([league, preds]) => (
             <LeagueGroup key={league} league={league} predictions={preds} />
           ))}
         </div>

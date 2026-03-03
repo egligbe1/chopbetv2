@@ -17,7 +17,6 @@ interface PredictionCardProps {
 }
 
 export function PredictionCard({ prediction }: PredictionCardProps) {
-    const [isExpanded, setIsExpanded] = useState(false);
 
     const getRiskColor = (risk: string) => {
         switch (risk.toLowerCase()) {
@@ -95,39 +94,6 @@ export function PredictionCard({ prediction }: PredictionCardProps) {
                 </div>
 
                 <ConfidenceBar confidence={prediction.confidence} />
-
-                {/* Expandable Reasoning */}
-                <button
-                    onClick={() => setIsExpanded(!isExpanded)}
-                    className="w-full mt-4 py-2 flex items-center justify-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors group"
-                >
-                    {isExpanded ? (
-                        <>Less Info <ChevronUp size={14} className="group-hover:-translate-y-0.5 transition-transform" /></>
-                    ) : (
-                        <>AI Analysis <ChevronDown size={14} className="group-hover:translate-y-0.5 transition-transform" /></>
-                    )}
-                </button>
-
-                {isExpanded && (
-                    <div className="flex flex-col gap-3">
-                        <div className="flex items-start gap-2 text-sm text-foreground/80 italic leading-relaxed">
-                            <Info size={16} className="text-primary mt-1 shrink-0" />
-                            <p>{prediction.reasoning}</p>
-                        </div>
-
-                        {prediction.source_link && (
-                            <a
-                                href={prediction.source_link}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-primary hover:text-primary-hover transition-colors w-fit ml-6"
-                            >
-                                <ExternalLink size={12} />
-                                Verify Fixture
-                            </a>
-                        )}
-                    </div>
-                )}
             </div>
         </div>
     );
