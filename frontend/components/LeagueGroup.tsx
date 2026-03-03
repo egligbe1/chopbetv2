@@ -9,20 +9,25 @@ interface LeagueGroupProps {
 
 export function LeagueGroup({ league, predictions }: LeagueGroupProps) {
     return (
-        <div className="space-y-4">
-            <div className="flex items-center gap-3 px-2">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/5 border border-white/10 shadow-inner">
+        <div className="space-y-6">
+            {/* League header with divider */}
+            <div className="flex items-center gap-4 pb-5 border-b border-white/10">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 border border-primary/20 shadow-inner">
                     <Trophy size={18} className="text-primary" />
                 </div>
-                <div>
-                    <h2 className="text-lg font-bold tracking-tight">{league}</h2>
-                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-widest">
-                        {predictions.length} Best {predictions.length === 1 ? 'Pick' : 'Picks'}
+                <div className="min-w-0">
+                    <h2 className="text-xl font-bold tracking-tight truncate">{league}</h2>
+                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-widest mt-0.5">
+                        {predictions.length} Top {predictions.length === 1 ? 'Pick' : 'Picks'} Today
                     </p>
+                </div>
+                <div className="ml-auto shrink-0 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs font-bold text-muted-foreground tabular-nums">
+                    {predictions.length}
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* Cards grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 lg:gap-7">
                 {predictions.map((prediction) => (
                     <PredictionCard key={prediction.id} prediction={prediction} />
                 ))}
