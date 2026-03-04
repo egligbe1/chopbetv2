@@ -3,26 +3,29 @@
 @theme {
   --color-background: #0a0a0a;
   --color-foreground: #ededed;
-  
+
   --color-card: #161616;
   --color-card-foreground: #ffffff;
-  
-  --color-primary: #3b82f6; /* Blue 500 */
+
+  --color-primary: #3b82f6;
+  /* Blue 500 */
   --color-primary-foreground: #ffffff;
-  
-  --color-secondary: #1e293b; /* Slate 800 */
+
+  --color-secondary: #1e293b;
+  /* Slate 800 */
   --color-secondary-foreground: #f1f5f9;
-  
-  --color-accent: #f59e0b; /* Amber 500 */
+
+  --color-accent: #f59e0b;
+  /* Amber 500 */
   --color-accent-foreground: #000000;
-  
+
   --color-muted: #262626;
   --color-muted-foreground: #a3a3a3;
-  
+
   --color-success: #22c55e;
   --color-warning: #eab308;
   --color-danger: #ef4444;
-  
+
   --radius-lg: 0.75rem;
   --radius-md: 0.5rem;
   --radius-sm: 0.25rem;
@@ -45,7 +48,12 @@
 }
 
 .hover-glow {
-  @apply transition-all duration-300 hover:shadow-[0_0_15px_rgba(59,130,246,0.3)] hover:border-primary/50;
+  transition: all 300ms;
+}
+
+.hover-glow:hover {
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
+  border-color: rgba(59, 130, 246, 0.5);
 }
 
 .confidence-gradient {
@@ -67,4 +75,23 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: #333;
+}
+
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@media (max-width: 767px) {
+  body {
+    padding-bottom: 4.5rem;
+  }
 }

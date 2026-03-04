@@ -5,6 +5,7 @@ from datetime import datetime, UTC, timedelta
 from typing import Optional
 from database import get_db
 from models import Prediction as PredictionModel
+from cache import cache_response, invalidate_cache
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,9 +14,13 @@ router = APIRouter(prefix="/predictions", tags=["predictions"])
 
 
 @router.get("/accumulator")
-def get_daily_accumulator(sport: str = Query("football", description="Sport to fetch accumulator for"), db: Session = Depends(get_db)):
+@cache_response(expire=3600)
+def get_daily_accumulator(
+    date: str = Query(None, description="Date to fetch accumulator for (YYYY-MM-DD)"),
+    sport: str = Query("football", description="Sport to fetch accumulator for"), 
+    db: Session = Depends(get_db)):
     """
-    Get a curated accumulator for today.
+    Get a curated accumulator for today or a specific date.
     Starts with the 5 highest-confidence picks and keeps adding more (up to 15)
     until total odds reach the 10.00–200.00 target range.
     """
@@ -24,9 +29,19 @@ def get_daily_accumulator(sport: str = Query("football", description="Sport to f
     MIN_PICKS = 5
     MAX_PICKS = 15
 
-    today = datetime.now(UTC).date()
-    start_of_day = datetime(today.year, today.month, today.day, tzinfo=UTC) - timedelta(hours=1)
-    end_of_day = start_of_day + timedelta(days=1, hours=2)
+    if date:
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            return {"error": "Invalid date format. Use YYYY-MM-DD."}
+        start_of_day = datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC)
+        end_of_day = start_of_day + timedelta(days=1)
+        iso_date = target_date.isoformat()
+    else:
+        today = datetime.now(UTC).date()
+        start_of_day = datetime(today.year, today.month, today.day, tzinfo=UTC) - timedelta(hours=1)
+        end_of_day = start_of_day + timedelta(days=1, hours=2)
+        iso_date = today.isoformat()
 
     candidates = db.query(PredictionModel).options(joinedload(PredictionModel.result)).filter(
         and_(
@@ -55,7 +70,7 @@ def get_daily_accumulator(sport: str = Query("football", description="Sport to f
             break
 
     return {
-        "date": today.isoformat(),
+        "date": iso_date,
         "total_odds": round(total_odds, 2),
         "count": len(selected),
         "predictions": [_serialize_prediction(p) for p in selected]
@@ -63,6 +78,7 @@ def get_daily_accumulator(sport: str = Query("football", description="Sport to f
 
 
 @router.get("/today")
+@cache_response(expire=1800)
 def get_today_predictions(sport: str = Query("football", description="Sport to fetch predictions for"), db: Session = Depends(get_db)):
     """Get all predictions for today."""
     today = datetime.now(UTC).date()
@@ -85,6 +101,7 @@ def get_today_predictions(sport: str = Query("football", description="Sport to f
 
 
 @router.get("/date/{date}")
+@cache_response(expire=3600)
 def get_predictions_by_date(date: str, sport: str = Query("football", description="Sport to fetch predictions for"), db: Session = Depends(get_db)):
     """Get predictions for a specific date (YYYY-MM-DD)."""
     try:

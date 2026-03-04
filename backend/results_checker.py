@@ -167,7 +167,7 @@ def check_results():
                     ht_h, ht_a = res.get("ht_home"), res.get("ht_away")
                     ft_h, ft_a = res.get("ft_home"), res.get("ft_away")
                     
-                    if None not in (ht_h, ht_a, ft_h, ft_a):
+                    if None not in (ft_h, ft_a):
                         for p in m_group["predictions"]:
                              # Save actual result details in the Results table
                              existing = db.query(Result).filter(Result.prediction_id == p.id).first()
@@ -208,60 +208,69 @@ def check_results():
 def _evaluate_prediction(prediction: Prediction, ht_home: int, ht_away: int,
                           ft_home: int, ft_away: int) -> str:
     """Evaluates whether a prediction was correct based on the actual scores."""
-    market = prediction.market
-    pred_value = prediction.prediction
-
+    market = prediction.market.lower()
+    pred_value = prediction.prediction.lower()
+    home_team = prediction.home_team.lower()
+    away_team = prediction.away_team.lower()
 
     try:
-        if market == "HT Over 0.5":
+        # 1. Goal Markets
+        if any(m in market for m in ["over 0.5", "ht over 0.5"]):
             ht_total = (ht_home or 0) + (ht_away or 0)
             return "won" if ht_total > 0 else "lost"
 
-        elif market == "Total Over 1.5":
+        elif "over 1.5" in market:
             ft_total = (ft_home or 0) + (ft_away or 0)
             return "won" if ft_total > 1 else "lost"
 
-        elif market == "Total Over 2.5":
+        elif "over 2.5" in market:
             ft_total = (ft_home or 0) + (ft_away or 0)
             return "won" if ft_total > 2 else "lost"
 
-        elif market == "BTTS":
+        elif "btts" in market or "both teams to score" in market:
             both_scored = (ft_home or 0) > 0 and (ft_away or 0) > 0
-            # Normalize: "BTTS Yes" -> "yes", "BTTS No" -> "no", "Yes" -> "yes"
-            pv_normalized = pred_value.lower().replace("btts", "").strip()
-            if pv_normalized == "yes":
-                return "won" if both_scored else "lost"
-            else:
+            if "no" in pred_value:
                 return "won" if not both_scored else "lost"
+            return "won" if both_scored else "lost"
 
-        elif market == "1X2":
-            if (ft_home or 0) > (ft_away or 0):
-                actual_outcome = "home"
-            elif (ft_away or 0) > (ft_home or 0):
-                actual_outcome = "away"
-            else:
-                actual_outcome = "draw"
-
-            pv_lower = pred_value.lower()
-            home_lower = prediction.home_team.lower()
-            away_lower = prediction.away_team.lower()
-            
-            # Dynamically handle multiple formats: "Arsenal", "Home Win", "1"
-            if "home" in pv_lower or pv_lower == "1" or home_lower in pv_lower or pv_lower in home_lower:
-                pred_outcome = "home"
-            elif "away" in pv_lower or pv_lower == "2" or away_lower in pv_lower or pv_lower in away_lower:
-                pred_outcome = "away"
-            elif "draw" in pv_lower or pv_lower == "x":
-                pred_outcome = "draw"
-            else:
-                # Fallback if unmatchable
-                return "lost"
-                
-            return "won" if pred_outcome == actual_outcome else "lost"
-
+        # 2. Result Markets
+        if ft_home > ft_away:
+            actual_res = "1" # Home
+        elif ft_away > ft_home:
+            actual_res = "2" # Away
         else:
-            logger.warning(f"Unknown market type: {market}")
-            return "void"
+            actual_res = "x" # Draw
+
+        # 1X2 / Match Result
+        if any(m in market for m in ["1x2", "match result", "full time"]):
+            if "home" in pred_value or "1" in pred_value or home_team in pred_value:
+                return "won" if actual_res == "1" else "lost"
+            elif "away" in pred_value or "2" in pred_value or away_team in pred_value:
+                return "won" if actual_res == "2" else "lost"
+            elif "draw" in pred_value or "x" in pred_value:
+                return "won" if actual_res == "x" else "lost"
+
+        # Double Chance
+        elif "double chance" in market:
+            # Outcomes: "1x", "2x", "12"
+            if "1x" in pred_value or ("home" in pred_value and "draw" in pred_value):
+                return "won" if actual_res in ["1", "x"] else "lost"
+            elif "x2" in pred_value or ("away" in pred_value and "draw" in pred_value):
+                return "won" if actual_res in ["2", "x"] else "lost"
+            elif "12" in pred_value or ("home" in pred_value and "away" in pred_value):
+                return "won" if actual_res in ["1", "2"] else "lost"
+
+        # Draw No Bet
+        elif "draw no bet" in market or "dnb" in market:
+            if actual_res == "x":
+                return "void"
+            if "home" in pred_value or "1" in pred_value or home_team in pred_value:
+                return "won" if actual_res == "1" else "lost"
+            elif "away" in pred_value or "2" in pred_value or away_team in pred_value:
+                return "won" if actual_res == "2" else "lost"
+
+        logger.warning(f"Unknown market or unmatchable prediction: {market} | {pred_value}")
+        return "void"
 
     except Exception as e:
         logger.error(f"Error evaluating prediction {prediction.id}: {str(e)}")

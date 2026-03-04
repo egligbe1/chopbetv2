@@ -2,34 +2,34 @@ import { Brain, Search, Target, ShieldAlert, Zap, Globe } from 'lucide-react';
 
 export default function AboutPage() {
     return (
-        <div className="max-w-4xl mx-auto space-y-12">
+        <div className="max-w-4xl mx-auto space-y-8 sm:space-y-12">
             {/* Hero Header */}
-            <div className="text-center space-y-4">
-                <div className="inline-flex h-16 w-16 items-center justify-center rounded-3xl bg-primary/10 border border-primary/20 shadow-xl shadow-primary/10 mb-2">
-                    <Brain className="text-primary" size={32} />
+            <div className="text-center space-y-3 sm:space-y-4">
+                <div className="inline-flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-3xl bg-primary/10 border border-primary/20 shadow-xl shadow-primary/10 mb-2">
+                    <Brain className="text-primary" size={28} />
                 </div>
-                <h1 className="text-5xl font-black tracking-tight font-outfit">
+                <h1 className="text-3xl sm:text-5xl font-black tracking-tight font-outfit">
                     About <span className="text-primary">ChopBet</span>
                 </h1>
-                <p className="text-xl text-muted-foreground font-medium max-w-2xl mx-auto">
-                    The intersection of advanced Artificial Intelligence and deep football analytics.
+                <p className="text-base sm:text-xl text-muted-foreground font-medium max-w-2xl mx-auto">
+                    The intersection of advanced AI and deep football analytics.
                 </p>
             </div>
 
             {/* How it Works */}
-            <section className="space-y-8">
+            <section className="space-y-6 sm:space-y-8">
                 <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/20">
                         <Zap className="text-primary" size={20} />
                     </div>
-                    <h2 className="text-2xl font-bold font-outfit">How the Engine works</h2>
+                    <h2 className="text-xl sm:text-2xl font-bold font-outfit">How the Engine works</h2>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                     <MethodologyCard
                         icon={<Search className="text-primary" />}
                         title="Real-time Research"
-                        description="Our system uses Google Gemini with Research Grounding to scan the web for the latest football data, ensuring every prediction is based on live, up-to-the-minute information."
+                        description="Our system scrapes live match statistics and previews directly from BBC Sport, feeding structured, high-quality data into Google Gemini to ensure every prediction is based on the latest expert analysis."
                     />
                     <MethodologyCard
                         icon={<Globe className="text-primary" />}
@@ -50,23 +50,23 @@ export default function AboutPage() {
             </section>
 
             {/* The Methodology */}
-            <section className="glass-card p-8 md:p-10 space-y-6">
-                <h2 className="text-2xl font-bold font-outfit flex items-center gap-3">
+            <section className="glass-card p-5 sm:p-8 md:p-10 space-y-4 sm:space-y-6">
+                <h2 className="text-xl sm:text-2xl font-bold font-outfit flex items-center gap-3">
                     <Zap className="text-primary" size={24} />
                     The Core Algorithm
                 </h2>
-                <div className="space-y-4 text-foreground/80 leading-relaxed">
+                <div className="space-y-4 text-sm sm:text-base text-foreground/80 leading-relaxed">
                     <p>
-                        ChopBet does not rely on static historical data alone. Every morning at 07:00 AM UTC, our Python-based backend triggers a deep-research cycle. The AI "grounding" mechanism allows the model to browse the internet much like a human analyst would, but with the parsing speed of a high-performance machine.
+                        ChopBet does not rely on static historical data alone. Every morning at 07:00 AM UTC, our Python-based backend triggers a deep-research cycle. Instead of making generic web searches, the engine specifically scrapes expert match previews and statistics from reliable sources like BBC Sport.
                     </p>
                     <p>
-                        By cross-referencing injury lists, expected tactical shifts, and motivation levels (e.g., relegation battles vs title races), the engine produces a confidence score for each pick. Only predictions with a confidence level exceeding our strict thresholds are surfaced on the dashboard.
+                        By combining this freshly pulled data with our AI's powerful analytical capabilities, the engine can cross-reference injury lists, expected tactical shifts, and team motivation levels. Only predictions with a confidence level exceeding our strict thresholds are surfaced on the dashboard.
                     </p>
                 </div>
             </section>
 
             {/* Disclaimer Section */}
-            <section className="p-6 bg-white/5 border border-white/10 rounded-2xl border-l-4 border-l-danger/50 space-y-4">
+            <section className="p-4 sm:p-6 bg-white/5 border border-white/10 rounded-2xl border-l-4 border-l-danger/50 space-y-3 sm:space-y-4">
                 <div className="flex items-center gap-2 text-danger font-bold uppercase tracking-widest text-xs">
                     <ShieldAlert size={16} />
                     Important Disclaimer
@@ -81,12 +81,12 @@ export default function AboutPage() {
 
 function MethodologyCard({ icon, title, description }: { icon: React.ReactNode, title: string, description: string }) {
     return (
-        <div className="glass-card p-6 space-y-4 hover-glow group transition-all">
-            <div className="h-10 w-10 rounded-lg bg-white/5 flex items-center justify-center border border-white/5 group-hover:border-primary/30 group-hover:bg-primary/5 transition-all">
+        <div className="glass-card p-4 sm:p-6 space-y-3 sm:space-y-4 hover-glow group transition-all">
+            <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-lg bg-white/5 flex items-center justify-center border border-white/5 group-hover:border-primary/30 group-hover:bg-primary/5 transition-all">
                 {icon}
             </div>
-            <h3 className="text-lg font-bold">{title}</h3>
-            <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
+            <h3 className="text-base sm:text-lg font-bold">{title}</h3>
+            <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">{description}</p>
         </div>
     );
 }

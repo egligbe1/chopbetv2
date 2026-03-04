@@ -20,7 +20,7 @@ from sqlalchemy import and_
 from database import SessionLocal
 from models import Prediction
 from search_utils import search_utils
-from ddgs import DDGS
+from cache import invalidate_cache
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -35,6 +35,7 @@ FALLBACK_GEMINI_API_KEY = os.getenv("FALLBACK_GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 MAX_PREDICTIONS = 25  # Hard cap on daily predictions saved
+MIN_PREDICTIONS = 15  # Minimum target — retry if below this
 
 
 # ============================================================================
@@ -106,9 +107,13 @@ def extract_fixtures(raw_text: str, today_str: str) -> list[dict]:
 
     TASK: Extract ALL real, scheduled football matches for today.
     Return ONLY the fixture data — no predictions, no analysis.
+    
+    IMPORTANT: Extract EVERY match you can find. Do NOT skip any match.
+    Look for matches from ALL leagues mentioned, not just top leagues.
+    It is critical that you capture as many fixtures as possible.
 
     RAW TEXT:
-    {raw_text[:30000]}
+    {raw_text[:300000]}
 
     OUTPUT: A JSON object with a "fixtures" key containing an array.
     Each fixture object MUST have:
@@ -130,46 +135,41 @@ def extract_fixtures(raw_text: str, today_str: str) -> list[dict]:
 # Phase 2 — Enrich fixtures with AI Search Context (DuckDuckGo)
 # ============================================================================
 
-def enrich_with_stats(fixtures: list[dict]) -> list[dict]:
+def enrich_with_stats(fixtures: list[dict], today_str: str) -> list[dict]:
     """
-    Phase 2: For each fixture, use DuckDuckGo Search to fetch granular stats:
-    last 5 form, goals scored/conceded, expected goals (xG), and injury news.
-    Returns the same fixtures list with a 'search_context' key added to each.
+    Phase 2: For each fixture, find its BBC match link and scrape preview stats
+    (H2H and Match Facts).
     """
-    logger.info(f"Phase 2: Enriching {len(fixtures)} fixtures with detailed search context...")
-    enriched = []
+    logger.info(f"Phase 2: Enriching {len(fixtures)} fixtures with BBC match page stats...")
     
-    # We use a single DDGS instance
-    ddgs = DDGS()
-
+    # 1. Get all available match links for today
+    match_links = search_utils.get_bbc_match_links(today_str)
+    
+    enriched = []
     for fixture in fixtures:
-        home = fixture.get("home_team", "")
-        away = fixture.get("away_team", "")
+        home = fixture.get("home_team", "").lower().strip()
+        away = fixture.get("away_team", "").lower().strip()
         
-        # Granular queries based on user request
-        queries = [
-            f"{home} vs {away} last 5 matches form recent results",
-            f"{home} vs {away} goals scored goals conceded stats",
-            f"{home} vs {away} expected goals xG stat",
-            f"{home} vs {away} injury news missing players"
-        ]
+        # 2. Match the extracted fixture to a BBC link
+        match_url = None
+        for link_data in match_links:
+            link_text = link_data["teams"].lower()
+            # Simple heuristic: if both home and away team names are in the link text
+            if home in link_text and away in link_text:
+                match_url = link_data["url"]
+                break
         
-        snippets = []
-        for q in queries:
-            try:
-                # Slight delay between rapid searches to avoid blocking
-                time.sleep(1.5)
-                results = ddgs.text(q, max_results=1)
-                for r in results:
-                    if r.get('body'):
-                        snippets.append(f"[{q}] " + r['body'].strip())
-            except Exception as e:
-                logger.warning(f"DuckDuckGo search failed for query '{q}': {e}")
-                
-        if snippets:
-            fixture["search_context"] = " | ".join(snippets)
+        # 3. Scrape the match page if found
+        if match_url:
+            logger.info(f"Scraping BBC stats for: {fixture['home_team']} vs {fixture['away_team']}")
+            fixture["search_context"] = search_utils.get_match_preview_stats(match_url)
+            fixture["source_link"] = match_url
+            # Small delay to be polite to BBC
+            time.sleep(1)
         else:
+            logger.warning(f"No BBC match page found for {fixture['home_team']} vs {fixture['away_team']}")
             fixture["search_context"] = None
+            fixture["source_link"] = "https://www.bbc.com/sport/football"
 
         enriched.append(fixture)
 
@@ -239,10 +239,15 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
     if len(fixtures_text) > 60000:
         fixtures_text = fixtures_text[:60000] + "\n... (truncated)"
 
+    # Determine target based on available fixtures
+    num_fixtures = len(enriched_fixtures)
+    target_min = min(15, num_fixtures)  # Can't predict more than we have
+    target_max = min(25, num_fixtures)
+
     prompt = f"""
     You are an elite football betting analyst and data scientist. Today is {today_str}.
 
-    Below is a list of today's football fixtures. Most have been enriched with 
+    Below is a list of {num_fixtures} football fixtures for today. Most have been enriched with 
     REAL search snippets ("search_context") grabbed from recent match previews across the web.
     These snippets contain clues about recent form, injuries, xG, and tactical points.
 
@@ -250,12 +255,16 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
     {fixtures_text}
 
     YOUR TASK:
-    1. Analyse ALL fixtures using the provided real-world search context — not general knowledge.
-    2. Select the TOP 20–25 highest-value, highest-confidence bets.
-    3. For each pick, base your reasoning EXPLICITLY on the search snippets provided:
+    1. Analyse ALL {num_fixtures} fixtures using the provided real-world search context — not general knowledge.
+    2. Select {target_min}–{target_max} highest-value, highest-confidence bets.
+       YOU MUST PROVIDE AT LEAST {target_min} PREDICTIONS. This is a strict minimum.
+       If there are {num_fixtures} fixtures available, you should predict on most of them.
+    3. CRITICAL RULE: You MUST select exactly ONE prediction per match. NEVER include the same
+       match (same home_team vs away_team) more than once. Pick the single best market for each match.
+    4. For each pick, base your reasoning EXPLICITLY on the search snippets provided:
        - Reference actual form mentions, specific player injuries, or stats highlighted.
        - Example reasoning: "Search snippets indicate Arsenal has won 4 of their last 5, while Chelsea is missing their starting CB due to injury."
-    4. STRONGLY PRIORITIZE SAFER MARKETS over straight wins. Straight wins (1X2) are highly volatile.
+    5. STRONGLY PRIORITIZE SAFER MARKETS over straight wins. Straight wins (1X2) are highly volatile.
        Instead, seek out high-probability outcomes like:
        - Double Chance (1X or X2)
        - Draw No Bet (Home DNB or Away DNB)
@@ -263,36 +272,40 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
        - Over 2.5 Goals (only if both teams are statistically high-scoring/conceding)
        - BTTS - Yes/No
        Only suggest a straight win if there is a massive, statistically proven disparity.
-    5. Only include predictions with confidence ≥ 70.
-    6. Prioritise "low" and "medium" risk picks. Include "high" risk only if strongly
+    6. Only include predictions with confidence ≥ 65.
+    7. Prioritise "low" and "medium" risk picks. Include "high" risk only if strongly
        justified by the data.
 
-    OUTPUT: Return a JSON object with a "predictions" key containing 20–25 objects.
+    OUTPUT: Return a JSON object with a "predictions" key containing {target_min}–{target_max} objects.
+    REMEMBER: Each match must appear ONLY ONCE. No duplicate matches allowed.
+    You MUST return at least {target_min} predictions.
     Each object MUST have:
-    - home_team: string
-    - away_team: string
+    - home_team: string (use the full official team name consistently)
+    - away_team: string (use the full official team name consistently)
     - league: string
     - country: string
     - kickoff_time: ISO 8601 string in UTC
     - market: string (e.g., "Double Chance 1X", "Over 1.5 Goals", "Draw No Bet", "BTTS - Yes")
     - prediction: string
-    - confidence: integer (70–100)
+    - confidence: integer (65–100)
     - odds: float (realistic decimal odds for these safer markets, typically 1.15–1.80)
     - source_link: "https://www.bbc.com/sport/football"
     - reasoning: string (2–3 sentences citing ACTUAL stats from the data provided)
     - risk_rating: string ("low", "medium", or "high")
 
-    The final list must be curated and elite — quality over quantity.
+    The final list must be curated and elite — quality over quantity. NO DUPLICATE MATCHES.
     """
 
     result = _gemini_generate(prompt, PREDICTION_SCHEMA)
     if result and "predictions" in result:
         preds = result["predictions"]
+        # Deduplicate predictions (one per match, keep highest confidence)
+        preds = _deduplicate_predictions(preds)
         # Hard cap
         if len(preds) > MAX_PREDICTIONS:
             preds.sort(key=lambda p: p.get("confidence", 0), reverse=True)
             preds = preds[:MAX_PREDICTIONS]
-        logger.info(f"Phase 3: Gemini returned {len(preds)} data-driven predictions.")
+        logger.info(f"Phase 3: Gemini returned {len(preds)} unique data-driven predictions.")
         return preds
     return []
 
@@ -301,16 +314,65 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
 # Main orchestration
 # ============================================================================
 
+def _normalize_team(name: str) -> str:
+    """Normalize team name for dedup comparison."""
+    name = name.lower().strip()
+    # Common abbreviations / aliases
+    aliases = {
+        "man utd": "manchester united", "man united": "manchester united",
+        "man city": "manchester city",
+        "wolves": "wolverhampton wanderers", "wolverhampton": "wolverhampton wanderers",
+        "spurs": "tottenham hotspur", "tottenham": "tottenham hotspur",
+        "brighton": "brighton and hove albion", "brighton & hove albion": "brighton and hove albion",
+        "west ham": "west ham united",
+        "newcastle": "newcastle united",
+        "nottm forest": "nottingham forest", "nott'm forest": "nottingham forest",
+        "sheff utd": "sheffield united", "sheffield utd": "sheffield united",
+        "leicester": "leicester city",
+        "ipswich": "ipswich town",
+        "luton": "luton town",
+        "athletic bilbao": "athletic club",
+        "atletico madrid": "atletico de madrid", "atlético madrid": "atletico de madrid",
+        "inter": "inter milan", "internazionale": "inter milan",
+        "psg": "paris saint-germain", "paris saint germain": "paris saint-germain",
+        "bayern": "bayern munich", "fc bayern": "bayern munich", "bayern münchen": "bayern munich",
+        "dortmund": "borussia dortmund", "bvb": "borussia dortmund",
+        "gladbach": "borussia monchengladbach",
+        "rb leipzig": "rasenballsport leipzig", "leipzig": "rasenballsport leipzig",
+    }
+    for alias, canonical in aliases.items():
+        if name == alias:
+            return canonical
+    return name
+
+
+def _match_key(home: str, away: str) -> tuple:
+    """Create a normalized dedup key for a match."""
+    return (_normalize_team(home), _normalize_team(away))
+
+
 def _deduplicate_fixtures(fixtures: list[dict]) -> list[dict]:
-    """Remove duplicate fixtures (same home+away, case-insensitive)."""
+    """Remove duplicate fixtures (same home+away, case-insensitive with alias matching)."""
     seen = set()
     unique = []
     for f in fixtures:
-        key = (f.get("home_team", "").lower().strip(), f.get("away_team", "").lower().strip())
+        key = _match_key(f.get("home_team", ""), f.get("away_team", ""))
         if key not in seen and key[0] and key[1]:
             seen.add(key)
             unique.append(f)
     return unique
+
+
+def _deduplicate_predictions(predictions: list[dict]) -> list[dict]:
+    """Remove duplicate predictions for the same match (keep highest confidence)."""
+    best = {}  # key -> prediction dict
+    for p in predictions:
+        key = _match_key(p.get("home_team", ""), p.get("away_team", ""))
+        if key[0] and key[1]:
+            existing = best.get(key)
+            if existing is None or p.get("confidence", 0) > existing.get("confidence", 0):
+                best[key] = p
+    return list(best.values())
 
 
 def generate_predictions():
@@ -332,22 +394,15 @@ def generate_predictions():
 
         bbc_text = search_utils.get_bbc_fixtures(today_str)
         if bbc_text and len(bbc_text) > 100:
-            logger.info("Phase 1a: Extracting fixtures from BBC text...")
+            logger.info("Phase 1a: Extracting fixtures from BBC text (including JSON state)...")
             bbc_fixtures = extract_fixtures(bbc_text, today_str)
             all_fixtures.extend(bbc_fixtures)
+            logger.info(f"BBC: extracted {len(bbc_fixtures)} fixtures.")
         else:
             logger.warning("Failed to fetch meaningful BBC fixtures text.")
 
-        logger.info("Waiting 10s before processing Goal.com...")
-        time.sleep(10)
-
-        goal_text = search_utils.get_goal_fixtures(today_str)
-        if goal_text and len(goal_text) > 100:
-            logger.info("Phase 1b: Extracting fixtures from Goal.com text...")
-            goal_fixtures = extract_fixtures(goal_text, today_str)
-            all_fixtures.extend(goal_fixtures)
-
-        # Deduplicate across sources
+        # User requested ONLY BBC for now.
+        # Deduplicate across sources (in case there are any dupes within BBC)
         all_fixtures = _deduplicate_fixtures(all_fixtures)
         logger.info(f"Phase 1 complete: {len(all_fixtures)} unique fixtures extracted.")
 
@@ -355,8 +410,8 @@ def generate_predictions():
             logger.error("No fixtures extracted from any source. Aborting.")
             return
 
-        # ── Phase 2: Enrich with FBref stats ───────────────────────────
-        enriched = enrich_with_stats(all_fixtures)
+        # ── Phase 2: Enrich with BBC match stats ───────────────────────
+        enriched = enrich_with_stats(all_fixtures, today_str)
 
         # ── Phase 3: Data-driven prediction ────────────────────────────
         logger.info("Phase 3: Sending enriched fixtures to Gemini for prediction...")
@@ -375,6 +430,21 @@ def generate_predictions():
         all_preds = all_preds[:MAX_PREDICTIONS]
 
         logger.info(f"Saving top {len(all_preds)} predictions to database...")
+
+        # Pre-load today's existing predictions for fast duplicate checks
+        from sqlalchemy import cast, Date
+        today_date = datetime.strptime(today_str, "%Y-%m-%d").date()
+        existing_preds = db.query(Prediction).filter(
+            cast(Prediction.date, Date) == today_date
+        ).all()
+
+        # Build a set of normalized match keys already in the DB
+        existing_keys = set()
+        for ep in existing_preds:
+            existing_keys.add(_match_key(ep.home_team, ep.away_team))
+
+        # Also track keys we save in THIS batch to prevent within-batch duplicates
+        batch_keys = set()
 
         for p_data in all_preds:
             try:
@@ -402,19 +472,12 @@ def generate_predictions():
                         ko_clean = "00:00:00"
                     ko_time = datetime.fromisoformat(f"{today_str}T{ko_clean}+00:00")
 
-                # Check for duplicate
-                from sqlalchemy import func, cast, Date
+                # Check for duplicate (DB + current batch)
+                match = _match_key(home, away)
 
-                existing = db.query(Prediction).filter(
-                    and_(
-                        func.lower(Prediction.home_team) == home.lower(),
-                        func.lower(Prediction.away_team) == away.lower(),
-                        cast(Prediction.date, Date) == p_date.date(),
-                    )
-                ).first()
-
-                if existing:
+                if match in existing_keys or match in batch_keys:
                     duplicate_count += 1
+                    logger.debug(f"Skipping duplicate: {home} vs {away}")
                     continue
 
                 prediction = Prediction(
@@ -434,6 +497,7 @@ def generate_predictions():
                     status="pending",
                 )
                 db.add(prediction)
+                batch_keys.add(match)
                 saved_count += 1
             except Exception as e:
                 logger.warning(f"Skipping invalid prediction data: {e}")
@@ -444,6 +508,9 @@ def generate_predictions():
             f"Engine complete. Saved {saved_count} new predictions. "
             f"Skipped {duplicate_count} duplicates."
         )
+        
+        # Invalidate cache so users see new predictions immediately
+        invalidate_cache()
 
     except Exception as e:
         logger.error(f"Engine failure: {str(e)}")

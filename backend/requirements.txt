@@ -5,6 +5,8 @@ psycopg2-binary==2.9.9
 alembic==1.13.1
 pydantic==2.6.1
 pydantic-settings==2.1.0
+redis
+types-redis
 python-dotenv==1.0.1
 apscheduler==3.10.4
 google-genai==1.2.0
@@ -13,7 +15,6 @@ httpx==0.28.1
 slowapi==0.1.9
 tavily==1.1.0
 duckduckgo-search==8.1.1
-beautifulsoup4
 beautifulsoup4
 lxml
 requests

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { api, type DailySummary, type Prediction, type AccumulatorSummary } from '@/lib/api';
 import { LeagueGroup } from '@/components/LeagueGroup';
 import AccumulatorCard from '@/components/AccumulatorCard';
+import { formatMarket } from '@/lib/utils';
 import {
   Trophy,
   Target,
@@ -118,14 +119,14 @@ export default function HomePage() {
   }, {} as Record<string, number>);
 
   return (
-    <div className="space-y-14">
+    <div className="space-y-8 sm:space-y-14">
       {/* Hero Section */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div className="space-y-1">
-          <h1 className="text-4xl font-black tracking-tight font-outfit">
+          <h1 className="text-3xl sm:text-4xl font-black tracking-tight font-outfit">
             Today's <span className="text-primary">Predictions</span>
           </h1>
-          <p className="text-muted-foreground font-medium">
+          <p className="text-sm sm:text-base text-muted-foreground font-medium">
             {format(new Date(), 'EEEE, MMMM do yyyy')}
           </p>
           <div className="flex bg-white/5 rounded-lg p-1 border border-white/10 w-fit mt-4">
@@ -153,7 +154,7 @@ export default function HomePage() {
       )}
 
       {/* Summary Dashboard */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
         <SummaryCard
           icon={<Trophy className="text-primary" />}
           label="Total Picks"
@@ -169,7 +170,7 @@ export default function HomePage() {
         <SummaryCard
           icon={<TrendingUp className="text-warning" />}
           label="Top Market"
-          value={Object.entries(marketsCount).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A'}
+          value={formatMarket(Object.entries(marketsCount).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A')}
           subtext="Most frequent"
         />
         <SummaryCard
@@ -191,7 +192,7 @@ export default function HomePage() {
         <div className="text-center py-20 glass-card">
           <RefreshCcw size={48} className="mx-auto text-primary/20 mb-4" />
           <h3 className="text-xl font-bold">No predictions yet today</h3>
-          <p className="text-muted-foreground">The AI engine generates new picks every morning at 07:00 UTC.</p>
+          <p className="text-muted-foreground">Hang on tight!.</p>
         </div>
       )}
     </div>
@@ -200,13 +201,13 @@ export default function HomePage() {
 
 function SummaryCard({ icon, label, value, subtext }: { icon: React.ReactNode, label: string, value: string | number, subtext: string }) {
   return (
-    <div className="glass-card p-4 md:p-5 flex items-start gap-4">
-      <div className="h-12 w-12 rounded-xl bg-white/5 flex items-center justify-center border border-white/10 shadow-lg">
+    <div className="glass-card p-3 sm:p-4 md:p-5 flex items-start gap-3 sm:gap-4">
+      <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-xl bg-white/5 flex items-center justify-center border border-white/10 shadow-lg shrink-0">
         {icon}
       </div>
-      <div>
-        <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{label}</span>
-        <h4 className="text-2xl font-black font-outfit">{value}</h4>
+      <div className="min-w-0">
+        <span className="text-[10px] sm:text-xs font-bold text-muted-foreground uppercase tracking-wider">{label}</span>
+        <h4 className="text-xl sm:text-2xl font-black font-outfit truncate">{value}</h4>
         <p className="text-[10px] text-muted-foreground font-medium">{subtext}</p>
       </div>
     </div>
