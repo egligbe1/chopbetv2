@@ -34,8 +34,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 FALLBACK_GEMINI_API_KEY = os.getenv("FALLBACK_GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-MAX_PREDICTIONS = 25  # Hard cap on daily predictions saved
-MIN_PREDICTIONS = 15  # Minimum target — retry if below this
+MAX_PREDICTIONS = 50  # Hard cap on daily predictions saved
+MIN_PREDICTIONS = 20  # Minimum target — retry if below this
 
 
 # ============================================================================
@@ -105,13 +105,13 @@ def extract_fixtures(raw_text: str, today_str: str) -> list[dict]:
     You are a football data extraction specialist. Today is {today_str}.
     Below is raw text scraped from a football fixtures page.
 
-    TASK: Extract ALL real, scheduled football matches for today.
+    TASK: Extract ALL real, scheduled football matches strictly for {today_str} ONLY.
     Return ONLY the fixture data — no predictions, no analysis.
     
-    IMPORTANT: Extract EVERY match you can find. Do NOT skip any match.
+    IMPORTANT: Extract EVERY match you can find for {today_str}. Do NOT skip any match for this date.
     Look for matches from ALL leagues mentioned, not just top leagues.
-    It is critical that you capture as many fixtures as possible.
-
+    Make absolutely sure NOT to include any matches scheduled for yesterday or tomorrow.
+    
     RAW TEXT:
     {raw_text[:300000]}
 
@@ -126,8 +126,15 @@ def extract_fixtures(raw_text: str, today_str: str) -> list[dict]:
 
     result = _gemini_generate(prompt, FIXTURE_SCHEMA)
     if result and "fixtures" in result:
-        logger.info(f"Phase 1: Extracted {len(result['fixtures'])} fixtures from raw text.")
-        return result["fixtures"]
+        # Strictly filter the returned fixtures to match today_str
+        valid_fixtures = []
+        for fix in result["fixtures"]:
+            ko_time = fix.get("kickoff_time", "")
+            if today_str in ko_time or "T" not in ko_time:
+                 valid_fixtures.append(fix)
+
+        logger.info(f"Phase 1: Extracted {len(valid_fixtures)} valid fixtures for {today_str} from raw text (originally {len(result['fixtures'])}).")
+        return valid_fixtures
     return []
 
 
@@ -301,6 +308,18 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
         preds = result["predictions"]
         # Deduplicate predictions (one per match, keep highest confidence)
         preds = _deduplicate_predictions(preds)
+        
+        # Strict anti-hallucination validation against input fixtures
+        allowed_keys = {_match_key(f.get("home_team", ""), f.get("away_team", "")) for f in enriched_fixtures}
+        valid_preds = []
+        for p in preds:
+            p_key = _match_key(p.get("home_team", ""), p.get("away_team", ""))
+            if p_key in allowed_keys:
+                valid_preds.append(p)
+            else:
+                logger.warning(f"Phase 3: Discarding hallucinated match {p.get('home_team')} vs {p.get('away_team')}")
+        preds = valid_preds
+
         # Hard cap
         if len(preds) > MAX_PREDICTIONS:
             preds.sort(key=lambda p: p.get("confidence", 0), reverse=True)
@@ -382,7 +401,7 @@ def generate_predictions():
       2. Extract structured fixtures via Gemini
       3. Enrich each fixture with FBref stats
       4. Send enriched data to Gemini for prediction
-      5. Save top 25 predictions to DB
+      5. Save top 50 predictions to DB
     """
     logger.info("Starting prediction engine (v6 — Data-Driven with FBref Stats)...")
     db = SessionLocal()
@@ -408,6 +427,39 @@ def generate_predictions():
 
         if not all_fixtures:
             logger.error("No fixtures extracted from any source. Aborting.")
+            return
+
+        # ---- NEW FILTER: Remove matches that have already kicked off ----
+        now_utc = datetime.now(UTC)
+        upcoming_fixtures = []
+        for fix in all_fixtures:
+            ko_str = fix.get("kickoff_time", "")
+            try:
+                if "T" in ko_str:
+                    ko_time = datetime.fromisoformat(ko_str.replace("Z", "+00:00"))
+                else:
+                    ko_clean = ko_str.replace("Z", "")
+                    parts = ko_clean.split(":")
+                    if len(parts) >= 2:
+                        ko_clean = f"{parts[0]}:{parts[1]}:00"
+                    elif len(parts) == 1:
+                        ko_clean = "00:00:00"
+                    ko_time = datetime.fromisoformat(f"{today_str}T{ko_clean}+00:00")
+                
+                # Check if kickoff time is strictly in the future
+                if ko_time > now_utc:
+                    upcoming_fixtures.append(fix)
+                else:
+                    logger.info(f"Skipping match already started: {fix.get('home_team')} vs {fix.get('away_team')} ({ko_time})")
+            except Exception as e:
+                # If parsing fails, we'll keep it just in case, or drop it
+                upcoming_fixtures.append(fix)
+
+        all_fixtures = upcoming_fixtures
+        logger.info(f"After kickoff filtering: {len(all_fixtures)} upcoming fixtures remain to be processed.")
+
+        if not all_fixtures:
+            logger.warning("No UPCOMING fixtures left for today. Aborting Phase 2.")
             return
 
         # ── Phase 2: Enrich with BBC match stats ───────────────────────
@@ -466,11 +518,16 @@ def generate_predictions():
                 else:
                     ko_clean = ko_str.replace("Z", "")
                     parts = ko_clean.split(":")
-                    if len(parts) == 2:
-                        ko_clean += ":00"
+                    if len(parts) >= 2:
+                        ko_clean = f"{parts[0]}:{parts[1]}:00"
                     elif len(parts) == 1:
                         ko_clean = "00:00:00"
                     ko_time = datetime.fromisoformat(f"{today_str}T{ko_clean}+00:00")
+                
+                # Check strict date
+                if ko_time.strftime("%Y-%m-%d") != today_str:
+                    logger.warning(f"Discarding match {home} vs {away} as it does not match today's date ({today_str}): {ko_time}")
+                    continue
 
                 # Check for duplicate (DB + current batch)
                 match = _match_key(home, away)

@@ -46,6 +46,14 @@ def batch_check_results(date_str: str, matches: list) -> dict:
     Find the actual, fully completed Half Time (HT) and Full Time (FT) scores for ONLY the following matches:
     {matches_list}
     
+    CRITICAL INSTRUCTION:
+    You MUST provide a `match_status` for every match. It MUST be exactly one of the following strings:
+    - "Finished" (or "FT" / "AET" / "Penalties" if the match is fully completed)
+    - "Postponed" (or "Cancelled")
+    - "Abandoned"
+    - "Live" (if the match is currently playing but not finished)
+    - "Pending" (if it hasn't started yet)
+
     RAW MATCH RESULTS TEXT:
     {combined_text}
     
@@ -54,7 +62,7 @@ def batch_check_results(date_str: str, matches: list) -> dict:
     Format exactly like this (If a match is postponed or hasn't finished, omit it or set scores to null):
     {{
         "Arsenal vs Chelsea": {{
-            "ht_home": 1, "ht_away": 0, "ft_home": 2, "ft_away": 1 
+            "ht_home": 1, "ht_away": 0, "ft_home": 2, "ft_away": 1, "match_status": "Finished"
         }}
     }}
     """
@@ -72,10 +80,10 @@ def batch_check_results(date_str: str, matches: list) -> dict:
                         "ht_away": {"type": "INTEGER", "nullable": True},
                         "ft_home": {"type": "INTEGER", "nullable": True},
                         "ft_away": {"type": "INTEGER", "nullable": True},
-                        "status_note": {"type": "STRING", "nullable": True},
+                        "match_status": {"type": "STRING", "nullable": True},
                     },
                     # Only match is required. Score fields are null if match isn't finished.
-                    "required": ["match"]
+                    "required": ["match", "match_status"]
                 }
             }
         },
@@ -166,31 +174,43 @@ def check_results():
                     res = batch_results[match_str]
                     ht_h, ht_a = res.get("ht_home"), res.get("ht_away")
                     ft_h, ft_a = res.get("ft_home"), res.get("ft_away")
+                    m_status = res.get("match_status", "").lower()
                     
-                    if None not in (ft_h, ft_a):
+                    # 1. Check if match was explicitly voided/abandoned
+                    if any(s in m_status for s in ["postponed", "cancelled", "abandoned", "void"]):
                         for p in m_group["predictions"]:
-                             # Save actual result details in the Results table
-                             existing = db.query(Result).filter(Result.prediction_id == p.id).first()
-                             if not existing:
-                                 new_result = Result(
-                                     prediction_id=p.id,
-                                     ht_score_home=ht_h,
-                                     ht_score_away=ht_a,
-                                     ft_score_home=ft_h,
-                                     ft_score_away=ft_a
-                                 )
-                                 db.add(new_result)
-                             else:
-                                 # Update existing result if it was re-checked
-                                 existing.ht_score_home = ht_h
-                                 existing.ht_score_away = ht_a
-                                 existing.ft_score_home = ft_h
-                                 existing.ft_score_away = ft_a
-                                 
-                             p.status = _evaluate_prediction(p, ht_h, ht_a, ft_h, ft_a)
-                             logger.info(f"Updated {match_str} ({p.market}): HT {ht_h}-{ht_a}, FT {ft_h}-{ft_a} -> {p.status}")
+                            p.status = "void"
+                            logger.info(f"Updated {match_str} ({p.market}): Match {m_status.upper()} -> void")
+                        continue
+
+                    # 2. Match must be finished to settle results
+                    if "finished" in m_status or "ft" in m_status or "aet" in m_status or "penalties" in m_status:
+                        if None not in (ft_h, ft_a):
+                            for p in m_group["predictions"]:
+                                 # Save actual result details in the Results table
+                                 existing = db.query(Result).filter(Result.prediction_id == p.id).first()
+                                 if not existing:
+                                     new_result = Result(
+                                         prediction_id=p.id,
+                                         ht_score_home=ht_h,
+                                         ht_score_away=ht_a,
+                                         ft_score_home=ft_h,
+                                         ft_score_away=ft_a
+                                     )
+                                     db.add(new_result)
+                                 else:
+                                     # Update existing result if it was re-checked
+                                     existing.ht_score_home = ht_h
+                                     existing.ht_score_away = ht_a
+                                     existing.ft_score_home = ft_h
+                                     existing.ft_score_away = ft_a
+                                     
+                                 p.status = _evaluate_prediction(p, ht_h, ht_a, ft_h, ft_a)
+                                 logger.info(f"Updated {match_str} ({p.market}): HT {ht_h}-{ht_a}, FT {ft_h}-{ft_a} -> {p.status}")
+                        else:
+                            logger.info(f"Scores incomplete for {match_str} despite '{m_status}' status, keeping pending.")
                     else:
-                        logger.info(f"Scores not yet available for {match_str}, keeping as pending.")
+                        logger.info(f"Match {match_str} status is '{m_status}', keeping as pending.")
 
         db.commit()
         
