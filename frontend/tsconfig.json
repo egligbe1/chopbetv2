@@ -22,15 +22,12 @@
         "name": "next"
       }
     ],
+    "baseUrl": ".",
     "paths": {
-      "@/lib/*": [
-        "./lib/*"
-      ],
-      "@/components/*": [
-        "./components/*"
+      "@/*": [
+        "./*"
       ]
-    },
-    "baseUrl": "."
+    }
   },
   "include": [
     "next-env.d.ts",
