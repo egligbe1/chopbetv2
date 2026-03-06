@@ -4,7 +4,11 @@ import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { formatMarket } from '@/lib/utils';
 import { api, type AccuracyStats, type DailyChartData, type LeagueAccuracy, type MarketAccuracy } from '@/lib/api';
-import { AccuracyChart } from '@/components/AccuracyChart';
+import dynamic from 'next/dynamic';
+const AccuracyChart = dynamic(() => import('@/components/AccuracyChart').then(mod => ({ default: mod.AccuracyChart })), {
+    ssr: false,
+    loading: () => <div className="h-[300px] w-full flex items-center justify-center"><div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin" /></div>
+});
 import {
     BarChart3,
     TrendingUp,
@@ -63,11 +67,33 @@ export default function StatisticsPage() {
         total: data.total
     })).sort((a, b) => b.accuracy - a.accuracy) : [];
 
-    const marketChart = marketData ? Object.entries(marketData).map(([name, data]) => ({
-        name: formatMarket(name),
-        accuracy: data.accuracy_pct,
-        total: data.total
-    })).sort((a, b) => b.accuracy - a.accuracy) : [];
+    const marketChart = marketData ? (() => {
+        // First pass: map and normalize names
+        const rawEntries = Object.entries(marketData).map(([name, data]) => ({
+            name: formatMarket(name),
+            accuracy: data.accuracy_pct,
+            total: data.total,
+            correct: data.correct,
+            incorrect: data.incorrect
+        }));
+        // Second pass: merge entries with the same normalized name
+        const merged = new Map<string, { total: number; correct: number; incorrect: number }>();
+        for (const entry of rawEntries) {
+            const existing = merged.get(entry.name);
+            if (existing) {
+                existing.total += entry.total;
+                existing.correct += entry.correct;
+                existing.incorrect += entry.incorrect;
+            } else {
+                merged.set(entry.name, { total: entry.total, correct: entry.correct, incorrect: entry.incorrect });
+            }
+        }
+        return Array.from(merged.entries()).map(([name, data]) => ({
+            name,
+            accuracy: data.total > 0 ? Math.round((data.correct / data.total) * 1000) / 10 : 0,
+            total: data.total
+        })).sort((a, b) => b.accuracy - a.accuracy);
+    })() : [];
 
     const trendChart = chartData.map(d => ({
         name: d.date,

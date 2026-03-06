@@ -7,7 +7,7 @@ import { ConfidenceBar } from './ConfidenceBar';
 import { type Prediction } from '@/lib/api';
 import { format } from 'date-fns';
 
-import { formatMarket, cn } from '@/lib/utils';
+import { formatMarket, formatPrediction, cn } from '@/lib/utils';
 
 interface PredictionCardProps {
     prediction: Prediction;
@@ -73,7 +73,7 @@ export function PredictionCard({ prediction, layout = 'grid' }: PredictionCardPr
                     <div className="flex items-center gap-2 min-w-0">
                         <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest shrink-0">{formatMarket(prediction.market)}</span>
                         <span className="text-[10px] text-white/20">•</span>
-                        <span className="text-[12px] font-bold text-primary truncate">{prediction.prediction}</span>
+                        <span className="text-[12px] font-bold text-primary truncate">{formatPrediction(prediction.market, prediction.prediction)}</span>
                     </div>
                     <span className="px-2 py-0.5 bg-white/5 text-primary/80 rounded text-[11px] font-bold border border-white/10 shrink-0 tabular-nums ml-2">
                         {prediction.odds?.toFixed(2) || '1.00'}
@@ -135,7 +135,7 @@ export function PredictionCard({ prediction, layout = 'grid' }: PredictionCardPr
                     <div className="flex flex-col items-end flex-1 pr-1 border-l border-white/10">
                         <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest mb-1">Pick</span>
                         <div className="flex items-center gap-2">
-                            <span className="font-black text-primary text-base leading-none">{prediction.prediction}</span>
+                            <span className="font-black text-primary text-base leading-none">{formatPrediction(prediction.market, prediction.prediction)}</span>
                             <div className="shrink-0">{statusIcons[prediction.status]}</div>
                         </div>
                     </div>

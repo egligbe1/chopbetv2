@@ -335,9 +335,10 @@ def _update_accuracy_stats(db: Session, date, sport: str = "football"):
         by_league[league]["accuracy_pct"] = round((c / t) * 100, 1) if t > 0 else 0.0
 
     # By market
+    from routes.stats import normalize_market
     by_market = {}
     for p in all_preds:
-        market = p.market
+        market = normalize_market(p.market)
         if market not in by_market:
             by_market[market] = {"total": 0, "correct": 0}
         by_market[market]["total"] += 1

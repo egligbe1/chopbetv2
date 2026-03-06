@@ -113,7 +113,7 @@ def get_accuracy_by_market(sport: str = Query("football", description="Sport to 
 
     by_market = {}
     for p in settled:
-        market = p.market
+        market = normalize_market(p.market)
         if market not in by_market:
             by_market[market] = {"total": 0, "correct": 0, "incorrect": 0}
         by_market[market]["total"] += 1
@@ -128,6 +128,43 @@ def get_accuracy_by_market(sport: str = Query("football", description="Sport to 
         by_market[market]["accuracy_pct"] = round((c / t) * 100, 1) if t > 0 else 0.0
 
     return {"by_market": by_market}
+
+
+def normalize_market(market: str) -> str:
+    """Normalize variant market strings to canonical display names for aggregation."""
+    if not market:
+        return market
+    m = market.lower().strip()
+
+    # BTTS variants: "btts - yes", "btts - no", "both teams to score", etc.
+    if "btts" in m or "both teams" in m:
+        return "BTTS"
+
+    # Double Chance variants: "double chance 1x", "double_chance", etc.
+    if "double" in m and "chance" in m:
+        return "Double Chance"
+
+    # Draw No Bet
+    if "draw no bet" in m or "dnb" in m:
+        return "Draw No Bet"
+
+    # First Half Over/Under — check before general over/under
+    for threshold in ["0.5", "1.5", "2.5", "3.5", "4.5"]:
+        if threshold in m and ("1st half" in m or "ht " in m or "first half" in m):
+            return f"1st Half Over/Under {threshold}"
+
+    # Over/Under goals
+    for threshold in ["0.5", "1.5", "2.5", "3.5", "4.5"]:
+        if threshold in m:
+            return f"Over/Under {threshold}"
+
+    # 1X2 / Match Result
+    if "1x2" in m or "match result" in m or "match winner" in m or m in ("home win", "away win", "draw"):
+        return "1X2"
+
+    # Fallback: title-case
+    return " ".join(w.capitalize() for w in market.split())
+
 
 
 @router.get("/daily")

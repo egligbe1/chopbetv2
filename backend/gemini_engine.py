@@ -283,6 +283,25 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
     7. Prioritise "low" and "medium" risk picks. Include "high" risk only if strongly
        justified by the data.
 
+    CRITICAL — MARKET AND PREDICTION NAMING CONVENTIONS:
+    You MUST use EXACTLY these standardized market names and prediction values:
+
+    | Market (use exactly)   | Prediction (use exactly)                          |
+    |------------------------|---------------------------------------------------|
+    | "Over 0.5 Goals"       | "Over 0.5" or "Under 0.5"                         |
+    | "Over 1.5 Goals"       | "Over 1.5" or "Under 1.5"                         |
+    | "Over 2.5 Goals"       | "Over 2.5" or "Under 2.5"                         |
+    | "Over 3.5 Goals"       | "Over 3.5" or "Under 3.5"                         |
+    | "BTTS"                 | "BTTS - Yes" or "BTTS - No"                       |
+    | "Double Chance"        | "1X" or "X2" or "12"                               |
+    | "Draw No Bet"          | "<HomeTeamName> DNB" or "<AwayTeamName> DNB"       |
+    | "1X2"                  | "Home Win" or "Away Win" or "Draw"                 |
+    | "1st Half Over 0.5"    | "1H Over 0.5" or "1H Under 0.5"                   |
+    | "1st Half Over 1.5"    | "1H Over 1.5" or "1H Under 1.5"                   |
+
+    DO NOT use "Yes" or "No" as the prediction value. The prediction must be self-descriptive.
+    DO NOT append details to the market name (e.g. do NOT use "BTTS - Yes" as the market, use "BTTS").
+
     OUTPUT: Return a JSON object with a "predictions" key containing {target_min}–{target_max} objects.
     REMEMBER: Each match must appear ONLY ONCE. No duplicate matches allowed.
     You MUST return at least {target_min} predictions.
@@ -292,8 +311,8 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
     - league: string
     - country: string
     - kickoff_time: ISO 8601 string in UTC
-    - market: string (e.g., "Double Chance 1X", "Over 1.5 Goals", "Draw No Bet", "BTTS - Yes")
-    - prediction: string
+    - market: string (MUST be one of the exact market names from the table above)
+    - prediction: string (MUST be one of the exact prediction values from the table above)
     - confidence: integer (65–100)
     - odds: float (realistic decimal odds for these safer markets, typically 1.15–1.80)
     - source_link: "https://www.bbc.com/sport/football"

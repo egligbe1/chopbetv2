@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { api, type DailySummary, type Prediction, type AccumulatorSummary } from '@/lib/api';
 import { LeagueGroup } from '@/components/LeagueGroup';
 import AccumulatorCard from '@/components/AccumulatorCard';
@@ -22,6 +22,7 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [sport, setSport] = useState<string>('football');
+  const dataRef = useRef<DailySummary | null>(null);
 
   const fetchData = useCallback(async (isBackground = false) => {
     try {
@@ -32,6 +33,7 @@ export default function HomePage() {
         api.getAccumulator(sport).catch(() => null)
       ]);
       setData(summary);
+      dataRef.current = summary;
       setAccumulator(acca);
 
       // Use the actual backend generation time instead of fetch time
@@ -43,15 +45,15 @@ export default function HomePage() {
 
       setError(null);
     } catch (err: any) {
-      console.error('Fetch error:', err);
+      console.error('Fetch error:', err.message || 'Unknown network error');
       // Only show error if we don't have any cached data to display
-      if (!data) {
+      if (!dataRef.current) {
         setError('Failed to load predictions. Please try again later.');
       }
     } finally {
       setLoading(false);
     }
-  }, [sport, data]);
+  }, [sport]);
 
   useEffect(() => {
     fetchData();
