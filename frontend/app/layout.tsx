@@ -7,11 +7,11 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const outfit = Outfit({ subsets: ["latin"], variable: "--font-outfit" });
 
 export const metadata: Metadata = {
-  title: "ChopBet | AI Football Predictions",
-  description: "Professional-grade football predictions powered by Google Gemini with Search Grounding.",
+  title: "ChopBet | Sports Bet Predictions",
+  description: "Sports Bet predictions",
   openGraph: {
-    title: "ChopBet | Professional AI Football Predictions",
-    description: "Get daily, high-accuracy football predictions powered by Google Gemini AI. Track historical performance, view clear reasoning, and bet smarter.",
+    title: "ChopBet | Sports Bet Predictions",
+    description: "Sports Bet predictions",
     url: "https://chopbets.onrender.com",
     siteName: "ChopBet",
     images: [
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
         url: "https://chopbets.onrender.com/og-image.png",
         width: 1200,
         height: 630,
-        alt: "ChopBet AI Predictions Preview",
+        alt: "ChopBet Sports Bet Predictions Preview",
       },
     ],
     locale: "en_US",
@@ -27,8 +27,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "ChopBet | AI Football Predictions",
-    description: "Professional-grade football predictions powered by Google Gemini with Search Grounding.",
+    title: "ChopBet | Sports Bet Predictions",
+    description: "Sports Bet predictions",
     images: ["https://chopbets.onrender.com/og-image.png"],
   },
 };
