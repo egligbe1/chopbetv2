@@ -11,17 +11,21 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Redis Configuration
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+REDIS_URL = os.getenv("REDIS_URL")
 
-try:
-    redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-    # Test connection
-    redis_client.ping()
-    logger.info("Connected to Redis successfully.")
-except Exception as e:
-    logger.warning(f"Could not connect to Redis: {e}. Caching will be disabled.")
-    redis_client = None
+redis_client = None
 
+if REDIS_URL:
+    try:
+        redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+        # Test connection
+        redis_client.ping()
+        logger.info("Connected to Redis successfully.")
+    except Exception as e:
+        logger.warning(f"Could not connect to Redis: {e}. Caching will be disabled.")
+        redis_client = None
+else:
+    logger.info("REDIS_URL not set. Caching is disabled by default.")
 
 def cache_response(expire: int = 3600):
     """
