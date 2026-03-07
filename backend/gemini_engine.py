@@ -227,6 +227,26 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
     Returns a list of prediction dicts (max 25).
     """
 
+    # ── Sort: Prioritize Top 8 European Leagues ────────────────────────────
+    TOP_LEAGUES = {
+        "premier league", "la liga", "serie a", "bundesliga", "ligue 1", 
+        "eredivisie", "primeira liga", "champions league", "europa league",
+        "uefa champions league", "uefa europa league", "primera division",
+        "english premier league", "spanish la liga", "italian serie a",
+        "german bundesliga", "french ligue 1", "dutch eredivisie", "portuguese primeira liga"
+    }
+
+    def _is_top_league(league_name: str) -> bool:
+        if not league_name:
+            return False
+        lname = league_name.lower()
+        for tl in TOP_LEAGUES:
+            if tl in lname:
+                return True
+        return False
+
+    enriched_fixtures.sort(key=lambda f: 0 if _is_top_league(f.get("league", "")) else 1)
+
     # Build a compact JSON representation of fixtures + search context for the prompt
     fixtures_json = []
     for f in enriched_fixtures:
@@ -266,12 +286,13 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
     2. Select {target_min}–{target_max} highest-value, highest-confidence bets.
        YOU MUST PROVIDE AT LEAST {target_min} PREDICTIONS. This is a strict minimum.
        If there are {num_fixtures} fixtures available, you should predict on most of them.
-    3. CRITICAL RULE: You MUST select exactly ONE prediction per match. NEVER include the same
+    3. CRITICAL RULE: STRONGLY PRIORITIZE matches from the Top 8 European leagues (e.g., Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Primeira Liga, Eredivisie, Champions League, Europa League) if they are present in the list. The list is pre-sorted to show these top leagues first.
+    4. CRITICAL RULE: You MUST select exactly ONE prediction per match. NEVER include the same
        match (same home_team vs away_team) more than once. Pick the single best market for each match.
-    4. For each pick, base your reasoning EXPLICITLY on the search snippets provided:
+    5. For each pick, base your reasoning EXPLICITLY on the search snippets provided:
        - Reference actual form mentions, specific player injuries, or stats highlighted.
        - Example reasoning: "Search snippets indicate Arsenal has won 4 of their last 5, while Chelsea is missing their starting CB due to injury."
-    5. STRONGLY PRIORITIZE SAFER MARKETS over straight wins. Straight wins (1X2) are highly volatile.
+    6. STRONGLY PRIORITIZE SAFER MARKETS over straight wins. Straight wins (1X2) are highly volatile.
        Instead, seek out high-probability outcomes like:
        - Double Chance (1X or X2)
        - Draw No Bet (Home DNB or Away DNB)
@@ -279,8 +300,8 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
        - Over 2.5 Goals (only if both teams are statistically high-scoring/conceding)
        - BTTS - Yes/No
        Only suggest a straight win if there is a massive, statistically proven disparity.
-    6. Only include predictions with confidence ≥ 65.
-    7. Prioritise "low" and "medium" risk picks. Include "high" risk only if strongly
+    7. Only include predictions with confidence ≥ 65.
+    8. Prioritise "low" and "medium" risk picks. Include "high" risk only if strongly
        justified by the data.
 
     CRITICAL — MARKET AND PREDICTION NAMING CONVENTIONS:
