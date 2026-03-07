@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 limiter = Limiter(key_func=get_remote_address)
 
 # Allowed frontend origins
-FRONTEND_URL = os.getenv("NEXT_PUBLIC_API_URL", "http://localhost:3000")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 
 @asynccontextmanager
