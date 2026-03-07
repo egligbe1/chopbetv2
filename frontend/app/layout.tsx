@@ -9,6 +9,28 @@ const outfit = Outfit({ subsets: ["latin"], variable: "--font-outfit" });
 export const metadata: Metadata = {
   title: "ChopBet | AI Football Predictions",
   description: "Professional-grade football predictions powered by Google Gemini with Search Grounding.",
+  openGraph: {
+    title: "ChopBet | Professional AI Football Predictions",
+    description: "Get daily, high-accuracy football predictions powered by Google Gemini AI. Track historical performance, view clear reasoning, and bet smarter.",
+    url: "https://chopbets.onrender.com",
+    siteName: "ChopBet",
+    images: [
+      {
+        url: "https://chopbets.onrender.com/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "ChopBet AI Predictions Preview",
+      },
+    ],
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "ChopBet | AI Football Predictions",
+    description: "Professional-grade football predictions powered by Google Gemini with Search Grounding.",
+    images: ["https://chopbets.onrender.com/og-image.png"],
+  },
 };
 
 export default function RootLayout({
