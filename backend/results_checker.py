@@ -235,9 +235,13 @@ def _evaluate_prediction(prediction: Prediction, ht_home: int, ht_away: int,
 
     try:
         # 1. Goal Markets
-        if any(m in market for m in ["over 0.5", "ht over 0.5"]):
+        if "ht over 0.5" in market:
             ht_total = (ht_home or 0) + (ht_away or 0)
             return "won" if ht_total > 0 else "lost"
+
+        elif "over 0.5" in market:
+            ft_total = (ft_home or 0) + (ft_away or 0)
+            return "won" if ft_total > 0 else "lost"
 
         elif "over 1.5" in market:
             ft_total = (ft_home or 0) + (ft_away or 0)
@@ -246,6 +250,22 @@ def _evaluate_prediction(prediction: Prediction, ht_home: int, ht_away: int,
         elif "over 2.5" in market:
             ft_total = (ft_home or 0) + (ft_away or 0)
             return "won" if ft_total > 2 else "lost"
+
+        elif "over 3.5" in market:
+            ft_total = (ft_home or 0) + (ft_away or 0)
+            return "won" if ft_total > 3 else "lost"
+
+        elif "under 1.5" in market:
+            ft_total = (ft_home or 0) + (ft_away or 0)
+            return "won" if ft_total < 2 else "lost"
+
+        elif "under 2.5" in market:
+            ft_total = (ft_home or 0) + (ft_away or 0)
+            return "won" if ft_total < 3 else "lost"
+            
+        elif "under 3.5" in market:
+            ft_total = (ft_home or 0) + (ft_away or 0)
+            return "won" if ft_total < 4 else "lost"
 
         elif "btts" in market or "both teams to score" in market:
             both_scored = (ft_home or 0) > 0 and (ft_away or 0) > 0
@@ -262,7 +282,7 @@ def _evaluate_prediction(prediction: Prediction, ht_home: int, ht_away: int,
             actual_res = "x" # Draw
 
         # 1X2 / Match Result
-        if any(m in market for m in ["1x2", "match result", "full time"]):
+        if any(m in market for m in ["1x2", "match result", "full time", "to win"]):
             if "home" in pred_value or "1" in pred_value or home_team in pred_value:
                 return "won" if actual_res == "1" else "lost"
             elif "away" in pred_value or "2" in pred_value or away_team in pred_value:
