@@ -5,7 +5,7 @@ from google import genai
 from google.genai import types
 from datetime import datetime, UTC, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, or_, exists
 from database import SessionLocal
 from models import Prediction, Result, AccuracyStats
 from dotenv import load_dotenv
@@ -134,29 +134,41 @@ def check_results():
     db = SessionLocal()
     
     try:
-        # Get all pending predictions
-        pending = db.query(Prediction).filter(Prediction.status == "pending").all()
+        # Get all pending predictions (also look back 7 days to catch any missed ones, and include pending predictions that have results)
+        lookback_date = datetime.now(UTC) - timedelta(days=7)
+        pending = db.query(Prediction).filter(
+            and_(
+                Prediction.status == "pending",
+                or_(
+                    Prediction.date >= lookback_date,
+                    exists().where(Result.prediction_id == Prediction.id)
+                )
+            )
+        ).all()
         
         if not pending:
-            logger.info("No pending predictions to check.")
+            logger.info("No pending predictions within lookback period to check.")
             return
 
         # Group matches by date
+        # Use simple date string as key
         matches_by_date = {}
         for p in pending:
             d_str = p.date.strftime("%Y-%m-%d")
             match_str = f"{p.home_team} vs {p.away_team}"
             if d_str not in matches_by_date:
                 matches_by_date[d_str] = []
-            if match_str not in [m["match_str"] for m in matches_by_date[d_str]]:
-                 matches_by_date[d_str].append({"match_str": match_str, "predictions": [p]})
+            
+            # Find if this match is already in our plan for this date
+            existing_group = next((m for m in matches_by_date[d_str] if m["match_str"] == match_str), None)
+            if existing_group:
+                existing_group["predictions"].append(p)
             else:
-                 # Add this prediction to the existing match group
-                 for m in matches_by_date[d_str]:
-                     if m["match_str"] == match_str:
-                         m["predictions"].append(p)
+                matches_by_date[d_str].append({"match_str": match_str, "predictions": [p]})
 
         logger.info(f"Checking {len(pending)} pending predictions across {len(matches_by_date)} dates.")
+
+        all_updated_dates = set()
 
         for date_str, match_groups in matches_by_date.items():
             matches_to_check = [m["match_str"] for m in match_groups]
@@ -174,7 +186,7 @@ def check_results():
                     res = batch_results[match_str]
                     ht_h, ht_a = res.get("ht_home"), res.get("ht_away")
                     ft_h, ft_a = res.get("ft_home"), res.get("ft_away")
-                    m_status = res.get("match_status", "").lower()
+                    m_status = (res.get("match_status") or "").lower()
                     
                     # 1. Check if match was explicitly voided/abandoned
                     if any(s in m_status for s in ["postponed", "cancelled", "abandoned", "void"]):
@@ -184,12 +196,13 @@ def check_results():
                         continue
 
                     # 2. Match must be finished to settle results
-                    if "finished" in m_status or "ft" in m_status or "aet" in m_status or "penalties" in m_status:
-                        if None not in (ft_h, ft_a):
+                    if any(s in m_status for s in ["finished", "ft", "aet", "penalties"]):
+                        if ft_h is not None and ft_a is not None:
+                            all_updated_dates.add(date_str)
                             for p in m_group["predictions"]:
                                  # Save actual result details in the Results table
-                                 existing = db.query(Result).filter(Result.prediction_id == p.id).first()
-                                 if not existing:
+                                 existing_res = db.query(Result).filter(Result.prediction_id == p.id).first()
+                                 if not existing_res:
                                      new_result = Result(
                                          prediction_id=p.id,
                                          ht_score_home=ht_h,
@@ -200,13 +213,14 @@ def check_results():
                                      db.add(new_result)
                                  else:
                                      # Update existing result if it was re-checked
-                                     existing.ht_score_home = ht_h
-                                     existing.ht_score_away = ht_a
-                                     existing.ft_score_home = ft_h
-                                     existing.ft_score_away = ft_a
+                                     existing_res.ht_score_home = ht_h
+                                     existing_res.ht_score_away = ht_a
+                                     existing_res.ft_score_home = ft_h
+                                     existing_res.ft_score_away = ft_a
                                      
-                                 p.status = _evaluate_prediction(p, ht_h, ht_a, ft_h, ft_a)
-                                 logger.info(f"Updated {match_str} ({p.market}): HT {ht_h}-{ht_a}, FT {ft_h}-{ft_a} -> {p.status}")
+                                 new_status = _evaluate_prediction(p, ht_h, ht_a, ft_h, ft_a)
+                                 p.status = new_status
+                                 logger.info(f"Updated {match_str} ({p.market}) ID {p.id}: HT {ht_h}-{ht_a}, FT {ft_h}-{ft_a} -> {p.status}")
                         else:
                             logger.info(f"Scores incomplete for {match_str} despite '{m_status}' status, keeping pending.")
                     else:
@@ -214,8 +228,37 @@ def check_results():
 
         db.commit()
         
-        # After updating results, recalculate daily stats
-        _update_accuracy_stats(db, datetime.now(UTC).date(), sport="football")
+        # After updating results, recalculate daily stats for all affected dates
+        for d_str in all_updated_dates:
+            try:
+                dt_obj = datetime.strptime(d_str, "%Y-%m-%d").date()
+                _update_accuracy_stats(db, dt_obj, sport="football")
+            except Exception as e:
+                logger.error(f"Error updating stats for {d_str}: {e}")
+        
+        # Also re-evaluate any pending predictions that already have results (from past failed evaluations)
+        pending_with_results = db.query(Prediction).join(Result).filter(
+            Prediction.status == "pending"
+        ).all()
+        
+        additional_updated_dates = set()
+        for p in pending_with_results:
+            res = p.result
+            if res.ft_score_home is not None and res.ft_score_away is not None:
+                new_status = _evaluate_prediction(p, res.ht_score_home, res.ht_score_away, res.ft_score_home, res.ft_score_away)
+                if new_status != "pending":
+                    p.status = new_status
+                    logger.info(f"Re-evaluated past pending prediction {p.id} ({p.market}): -> {p.status}")
+                    dt_obj = p.date.date()
+                    additional_updated_dates.add(dt_obj)
+        
+        if additional_updated_dates:
+            db.commit()
+            for dt_obj in additional_updated_dates:
+                try:
+                    _update_accuracy_stats(db, dt_obj, sport="football")
+                except Exception as e:
+                    logger.error(f"Error updating stats for {dt_obj}: {e}")
         
         logger.info("Results checking process completed successfully.")
 
@@ -233,47 +276,102 @@ def _evaluate_prediction(prediction: Prediction, ht_home: int, ht_away: int,
     home_team = prediction.home_team.lower()
     away_team = prediction.away_team.lower()
 
+    # Log evaluation attempt
+    logger.info(f"Evaluating {prediction.id}: {market} | Pred: {pred_value} | FT: {ft_home}-{ft_away} (HT: {ht_home}-{ht_away})")
+
     try:
-        # 1. Goal Markets
-        if "ht over 0.5" in market:
-            ht_total = (ht_home or 0) + (ht_away or 0)
-            return "won" if ht_total > 0 else "lost"
+        # Half Time Markets
+        if "1st half over 0.5" in market or "ht over 0.5" in market:
+            ht_total = (ht_home if ht_home is not None else 0) + (ht_away if ht_away is not None else 0)
+            if "1h over 0.5" in pred_value or "yes" in pred_value:
+                return "won" if ht_total > 0 else "lost"
+            elif "1h under 0.5" in pred_value:
+                return "won" if ht_total < 1 else "lost"
 
-        elif "over 0.5" in market:
-            ft_total = (ft_home or 0) + (ft_away or 0)
-            return "won" if ft_total > 0 else "lost"
+        elif "1st half over 1.5" in market or "ht over 1.5" in market:
+            ht_total = (ht_home if ht_home is not None else 0) + (ht_away if ht_away is not None else 0)
+            if "1h over 1.5" in pred_value or "yes" in pred_value:
+                return "won" if ht_total > 1 else "lost"
+            elif "1h under 1.5" in pred_value:
+                return "won" if ht_total < 2 else "lost"
 
-        elif "over 1.5" in market:
-            ft_total = (ft_home or 0) + (ft_away or 0)
-            return "won" if ft_total > 1 else "lost"
+        # 1. Goal Markets - Full Time
+        if "over 0.5 goals" in market or ("over 0.5" in market and "goals" in market):
+            ft_total = (ft_home if ft_home is not None else 0) + (ft_away if ft_away is not None else 0)
+            if "over 0.5" in pred_value:
+                return "won" if ft_total > 0 else "lost"
+            elif "under 0.5" in pred_value:
+                return "won" if ft_total < 1 else "lost"
 
-        elif "over 2.5" in market:
-            ft_total = (ft_home or 0) + (ft_away or 0)
-            return "won" if ft_total > 2 else "lost"
+        elif "over 1.5 goals" in market or ("over 1.5" in market and "goals" in market):
+            ft_total = (ft_home if ft_home is not None else 0) + (ft_away if ft_away is not None else 0)
+            if "over 1.5" in pred_value:
+                return "won" if ft_total > 1 else "lost"
+            elif "under 1.5" in pred_value:
+                return "won" if ft_total < 2 else "lost"
 
-        elif "over 3.5" in market:
-            ft_total = (ft_home or 0) + (ft_away or 0)
-            return "won" if ft_total > 3 else "lost"
+        elif "over 2.5 goals" in market or ("over 2.5" in market and "goals" in market):
+            ft_total = (ft_home if ft_home is not None else 0) + (ft_away if ft_away is not None else 0)
+            if "over 2.5" in pred_value:
+                return "won" if ft_total > 2 else "lost"
+            elif "under 2.5" in pred_value:
+                return "won" if ft_total < 3 else "lost"
+
+        elif "over 3.5 goals" in market or ("over 3.5" in market and "goals" in market):
+            ft_total = (ft_home if ft_home is not None else 0) + (ft_away if ft_away is not None else 0)
+            if "over 3.5" in pred_value:
+                return "won" if ft_total > 3 else "lost"
+            elif "under 3.5" in pred_value:
+                return "won" if ft_total < 4 else "lost"
+
+        # Legacy over markets without "goals"
+        elif "over 0.5" in market and "goals" not in market:
+            ft_total = (ft_home if ft_home is not None else 0) + (ft_away if ft_away is not None else 0)
+            if "yes" in pred_value:
+                return "won" if ft_total > 0 else "lost"
+
+        elif "over 1.5" in market and "goals" not in market:
+            ft_total = (ft_home if ft_home is not None else 0) + (ft_away if ft_away is not None else 0)
+            if "yes" in pred_value:
+                return "won" if ft_total > 1 else "lost"
+
+        elif "over 2.5" in market and "goals" not in market:
+            ft_total = (ft_home if ft_home is not None else 0) + (ft_away if ft_away is not None else 0)
+            if "yes" in pred_value:
+                return "won" if ft_total > 2 else "lost"
+
+        elif "over 3.5" in market and "goals" not in market:
+            ft_total = (ft_home if ft_home is not None else 0) + (ft_away if ft_away is not None else 0)
+            if "yes" in pred_value:
+                return "won" if ft_total > 3 else "lost"
 
         elif "under 1.5" in market:
-            ft_total = (ft_home or 0) + (ft_away or 0)
-            return "won" if ft_total < 2 else "lost"
+            ft_total = (ft_home if ft_home is not None else 0) + (ft_away if ft_away is not None else 0)
+            if "yes" in pred_value:
+                return "won" if ft_total < 2 else "lost"
 
         elif "under 2.5" in market:
-            ft_total = (ft_home or 0) + (ft_away or 0)
-            return "won" if ft_total < 3 else "lost"
-            
+            ft_total = (ft_home if ft_home is not None else 0) + (ft_away if ft_away is not None else 0)
+            if "yes" in pred_value:
+                return "won" if ft_total < 3 else "lost"
+                
         elif "under 3.5" in market:
-            ft_total = (ft_home or 0) + (ft_away or 0)
-            return "won" if ft_total < 4 else "lost"
+            ft_total = (ft_home if ft_home is not None else 0) + (ft_away if ft_away is not None else 0)
+            if "yes" in pred_value:
+                return "won" if ft_total < 4 else "lost"
 
+        # BTTS
         elif "btts" in market or "both teams to score" in market:
             both_scored = (ft_home or 0) > 0 and (ft_away or 0) > 0
-            if "no" in pred_value:
+            if "btts - no" in pred_value or ("no" in pred_value and "btts" in market):
                 return "won" if not both_scored else "lost"
-            return "won" if both_scored else "lost"
+            elif "btts - yes" in pred_value or ("yes" in pred_value and ("btts" in market or "both teams to score" in market)):
+                return "won" if both_scored else "lost"
 
         # 2. Result Markets
+        if ft_home is None or ft_away is None:
+             return "pending"
+
         if ft_home > ft_away:
             actual_res = "1" # Home
         elif ft_away > ft_home:
@@ -281,40 +379,39 @@ def _evaluate_prediction(prediction: Prediction, ht_home: int, ht_away: int,
         else:
             actual_res = "x" # Draw
 
-        # 1X2 / Match Result
+        # 1X2 / Match Result / Full Time / To Win
         if any(m in market for m in ["1x2", "match result", "full time", "to win"]):
-            if "home" in pred_value or "1" in pred_value or home_team in pred_value:
+            if any(v in pred_value for v in ["home win", "home", "1"]) or home_team in pred_value:
                 return "won" if actual_res == "1" else "lost"
-            elif "away" in pred_value or "2" in pred_value or away_team in pred_value:
+            elif any(v in pred_value for v in ["away win", "away", "2"]) or away_team in pred_value:
                 return "won" if actual_res == "2" else "lost"
-            elif "draw" in pred_value or "x" in pred_value:
+            elif any(v in pred_value for v in ["draw", "x"]):
                 return "won" if actual_res == "x" else "lost"
 
         # Double Chance
         elif "double chance" in market:
-            # Outcomes: "1x", "2x", "12"
-            if "1x" in pred_value or ("home" in pred_value and "draw" in pred_value):
+            if "1x" in pred_value:
                 return "won" if actual_res in ["1", "x"] else "lost"
-            elif "x2" in pred_value or ("away" in pred_value and "draw" in pred_value):
+            elif "x2" in pred_value:
                 return "won" if actual_res in ["2", "x"] else "lost"
-            elif "12" in pred_value or ("home" in pred_value and "away" in pred_value):
+            elif "12" in pred_value:
                 return "won" if actual_res in ["1", "2"] else "lost"
 
         # Draw No Bet
         elif "draw no bet" in market or "dnb" in market:
             if actual_res == "x":
                 return "void"
-            if "home" in pred_value or "1" in pred_value or home_team in pred_value:
+            if any(v in pred_value for v in ["home", "1"]) or home_team in pred_value or "home dnb" in pred_value:
                 return "won" if actual_res == "1" else "lost"
-            elif "away" in pred_value or "2" in pred_value or away_team in pred_value:
+            elif any(v in pred_value for v in ["away", "2"]) or away_team in pred_value or "away dnb" in pred_value:
                 return "won" if actual_res == "2" else "lost"
 
-        logger.warning(f"Unknown market or unmatchable prediction: {market} | {pred_value}")
-        return "void"
+        logger.warning(f"Unknown market or unmatchable prediction for ID {prediction.id}: {market} | {pred_value}")
+        return "pending" # Keep as pending if we can't decide, maybe we lack data
 
     except Exception as e:
         logger.error(f"Error evaluating prediction {prediction.id}: {str(e)}")
-        return "void"
+        return "pending"
 
 
 def _update_accuracy_stats(db: Session, date, sport: str = "football"):
