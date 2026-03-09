@@ -29,14 +29,17 @@ def batch_check_results(date_str: str, matches: list) -> dict:
     from search_utils import search_utils
     bbc_text = search_utils.get_bbc_fixtures(date_str) or ""
     goal_text = search_utils.get_goal_fixtures(date_str) or ""
+    espn_text = search_utils.get_espn_fixtures(date_str) or ""
     
-    combined_text = bbc_text[:20000] + "\n\n---\n\n" + goal_text[:20000]
+    combined_text = bbc_text[:15000] + "\n\n---\n\n" + goal_text[:15000] + "\n\n---\n\n" + espn_text[:15000]
     
     if len(combined_text) < 100:
         logger.error(f"Failed to fetch results text for {date_str}.")
         return {}
 
-    matches_list = "\n".join([f"- {m}" for m in matches])
+    # Normalize match names for better matching
+    normalized_matches = [_normalize_match(m) for m in matches]
+    matches_list = "\n".join([f"- {m}" for m in normalized_matches])
     
     prompt = f"""
     You are a professional sports results verifier.
@@ -107,7 +110,9 @@ def batch_check_results(date_str: str, matches: list) -> dict:
             results = data.get("results", [])
             
             # Convert list back to match map for easier lookup downstream
-            return {r["match"]: r for r in results if "match" in r}
+            match_results = {r["match"]: r for r in results if "match" in r}
+            logger.info(f"Gemini returned results for {len(match_results)} matches: {list(match_results.keys())}")
+            return match_results
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                 if attempt == 0 and FALLBACK_GEMINI_API_KEY:
@@ -155,7 +160,7 @@ def check_results():
         matches_by_date = {}
         for p in pending:
             d_str = p.date.strftime("%Y-%m-%d")
-            match_str = f"{p.home_team} vs {p.away_team}"
+            match_str = _normalize_match(f"{p.home_team} vs {p.away_team}")
             if d_str not in matches_by_date:
                 matches_by_date[d_str] = []
             
@@ -184,6 +189,7 @@ def check_results():
                 match_str = m_group["match_str"]
                 if match_str in batch_results:
                     res = batch_results[match_str]
+                    logger.info(f"Gemini result for {match_str}: {res}")
                     ht_h, ht_a = res.get("ht_home"), res.get("ht_away")
                     ft_h, ft_a = res.get("ft_home"), res.get("ft_away")
                     m_status = (res.get("match_status") or "").lower()
@@ -268,8 +274,49 @@ def check_results():
     finally:
         db.close()
 
-def _evaluate_prediction(prediction: Prediction, ht_home: int, ht_away: int,
-                          ft_home: int, ft_away: int) -> str:
+def _normalize_team(name: str) -> str:
+    """Normalize team name to match common BBC/ESPN naming conventions."""
+    name = name.lower().strip()
+    # Common abbreviations / aliases
+    aliases = {
+        "man utd": "manchester united", "man united": "manchester united",
+        "man city": "manchester city",
+        "wolves": "wolverhampton wanderers", "wolverhampton": "wolverhampton wanderers",
+        "spurs": "tottenham hotspur", "tottenham": "tottenham hotspur",
+        "brighton": "brighton & hove albion", "brighton and hove albion": "brighton & hove albion",
+        "west ham": "west ham united",
+        "newcastle": "newcastle united",
+        "nottm forest": "nottingham forest", "nott'm forest": "nottingham forest",
+        "sheff utd": "sheffield united", "sheffield utd": "sheffield united",
+        "leicester": "leicester city",
+        "ipswich": "ipswich town",
+        "luton": "luton town",
+        "athletic bilbao": "athletic club", "athletic club": "athletic club",
+        "atletico madrid": "atlético madrid", "atlético madrid": "atlético madrid",
+        "inter": "inter milan", "internazionale": "inter milan",
+        "psg": "paris saint-germain", "paris saint germain": "paris saint-germain",
+        "bayern": "bayern munich", "fc bayern": "bayern munich", "bayern münchen": "bayern munich",
+        "dortmund": "borussia dortmund", "bvb": "borussia dortmund",
+        "gladbach": "borussia mönchengladbach", "borussia monchengladbach": "borussia mönchengladbach",
+        "rb leipzig": "rasenballsport leipzig", "leipzig": "rasenballsport leipzig",
+        "real madrid": "real madrid",
+        "barcelona": "barcelona",
+        "arsenal": "arsenal",
+        "chelsea": "chelsea",
+        "liverpool": "liverpool",
+        "manchester united": "manchester united",
+        "manchester city": "manchester city",
+    }
+    return aliases.get(name, name).title()
+
+def _normalize_match(match_str: str) -> str:
+    """Normalize a match string like 'Home Team vs Away Team'."""
+    parts = match_str.split(" vs ")
+    if len(parts) == 2:
+        home = _normalize_team(parts[0])
+        away = _normalize_team(parts[1])
+        return f"{home} vs {away}"
+    return match_str
     """Evaluates whether a prediction was correct based on the actual scores."""
     market = prediction.market.lower()
     pred_value = prediction.prediction.lower()

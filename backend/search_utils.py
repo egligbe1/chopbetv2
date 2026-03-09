@@ -118,7 +118,7 @@ class SearchUtils:
         """
         Fetches the Goal.com live scores page for a given date as a fallback.
         """
-        url = f"https://www.goal.com/en-gh/live-scores/{date_str}"
+        url = f"https://www.goal.com/en/live-scores/{date_str}"
         logger.info(f"Scraping Goal.com fixtures from: {url}")
         
         try:
