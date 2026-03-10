@@ -317,6 +317,9 @@ def _normalize_match(match_str: str) -> str:
         away = _normalize_team(parts[1])
         return f"{home} vs {away}"
     return match_str
+
+def _evaluate_prediction(prediction: Prediction, ht_home: int, ht_away: int,
+                          ft_home: int, ft_away: int) -> str:
     """Evaluates whether a prediction was correct based on the actual scores."""
     market = prediction.market.lower()
     pred_value = prediction.prediction.lower()
@@ -428,29 +431,29 @@ def _normalize_match(match_str: str) -> str:
 
         # 1X2 / Match Result / Full Time / To Win
         if any(m in market for m in ["1x2", "match result", "full time", "to win"]):
-            if any(v in pred_value for v in ["home win", "home", "1"]) or home_team in pred_value:
+            if "home" in pred_value or "1" == pred_value or " 1 " in f" {pred_value} " or home_team in pred_value:
                 return "won" if actual_res == "1" else "lost"
-            elif any(v in pred_value for v in ["away win", "away", "2"]) or away_team in pred_value:
+            elif "away" in pred_value or "2" == pred_value or " 2 " in f" {pred_value} " or away_team in pred_value:
                 return "won" if actual_res == "2" else "lost"
-            elif any(v in pred_value for v in ["draw", "x"]):
+            elif "draw" in pred_value or "x" == pred_value or " x " in f" {pred_value} ":
                 return "won" if actual_res == "x" else "lost"
 
         # Double Chance
         elif "double chance" in market:
-            if "1x" in pred_value:
+            if "1x" in pred_value.split() or "1x" == pred_value or " 1x " in f" {pred_value} " or ("home" in pred_value and "draw" in pred_value):
                 return "won" if actual_res in ["1", "x"] else "lost"
-            elif "x2" in pred_value:
+            elif "x2" in pred_value.split() or "x2" == pred_value or " x2 " in f" {pred_value} " or ("away" in pred_value and "draw" in pred_value):
                 return "won" if actual_res in ["2", "x"] else "lost"
-            elif "12" in pred_value:
+            elif "12" in pred_value.split() or "12" == pred_value or " 12 " in f" {pred_value} " or ("home" in pred_value and "away" in pred_value):
                 return "won" if actual_res in ["1", "2"] else "lost"
 
         # Draw No Bet
         elif "draw no bet" in market or "dnb" in market:
             if actual_res == "x":
                 return "void"
-            if any(v in pred_value for v in ["home", "1"]) or home_team in pred_value or "home dnb" in pred_value:
+            if "home" in pred_value or "1" == pred_value or " 1 " in f" {pred_value} " or home_team in pred_value or "home dnb" in pred_value:
                 return "won" if actual_res == "1" else "lost"
-            elif any(v in pred_value for v in ["away", "2"]) or away_team in pred_value or "away dnb" in pred_value:
+            elif "away" in pred_value or "2" == pred_value or " 2 " in f" {pred_value} " or away_team in pred_value or "away dnb" in pred_value:
                 return "won" if actual_res == "2" else "lost"
 
         logger.warning(f"Unknown market or unmatchable prediction for ID {prediction.id}: {market} | {pred_value}")
