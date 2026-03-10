@@ -109,8 +109,8 @@ def batch_check_results(date_str: str, matches: list) -> dict:
             data = json.loads(response.text.strip())
             results = data.get("results", [])
             
-            # Convert list back to match map for easier lookup downstream
-            match_results = {r["match"]: r for r in results if "match" in r}
+            # Convert list back to match map for easier lookup downstream, normalizing match names
+            match_results = {_normalize_match(r["match"]): r for r in results if "match" in r}
             logger.info(f"Gemini returned results for {len(match_results)} matches: {list(match_results.keys())}")
             return match_results
         except Exception as e:
@@ -202,7 +202,7 @@ def check_results():
                         continue
 
                     # 2. Match must be finished to settle results
-                    if any(s in m_status for s in ["finished", "ft", "aet", "penalties"]):
+                    if any(s in m_status for s in ["finished", "ft", "aet", "penalties", "full time", "full-time"]):
                         if ft_h is not None and ft_a is not None:
                             all_updated_dates.add(date_str)
                             for p in m_group["predictions"]:
