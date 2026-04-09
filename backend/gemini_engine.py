@@ -42,7 +42,7 @@ MIN_PREDICTIONS = 20  # Minimum target — retry if below this
 # Gemini helpers
 # ============================================================================
 
-def _gemini_generate(prompt: str, schema: dict, model: str = "gemini-2.5-flash"):
+def _gemini_generate(prompt: str, schema: dict, model: str = "gemini-flash-latest"):
     """Call Gemini with structured JSON output, retry on rate limit with fallback key."""
     global client
     max_retries = 3
@@ -58,9 +58,10 @@ def _gemini_generate(prompt: str, schema: dict, model: str = "gemini-2.5-flash")
             )
             return json.loads(response.text.strip())
         except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            error_str = str(e)
+            if any(code in error_str for code in ["429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE"]):
                 if attempt == 0 and FALLBACK_GEMINI_API_KEY:
-                    logger.warning("Primary quota exhausted. Switching to fallback Gemini API key.")
+                    logger.warning(f"Gemini issue ({error_str}). Switching to fallback API key.")
                     client = genai.Client(api_key=FALLBACK_GEMINI_API_KEY)
                     continue
                 if attempt < max_retries - 1:
