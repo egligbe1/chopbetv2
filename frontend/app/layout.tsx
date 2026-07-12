@@ -10,6 +10,11 @@ const outfit = Outfit({ subsets: ["latin"], variable: "--font-outfit" });
 export const metadata: Metadata = {
   title: "ChopBet | Sports Bet Predictions",
   description: "Sports Bet predictions",
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+    apple: "/icon.png",
+  },
   openGraph: {
     title: "ChopBet | Sports Bet Predictions",
     description: "Sports Bet predictions",
