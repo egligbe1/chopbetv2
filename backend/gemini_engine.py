@@ -6,7 +6,9 @@ Pipeline:
   Phase 2  →  Enrich each fixture with real team stats from FBref
   Phase 3  →  Send enriched fixtures to Gemini for data-driven prediction
 
-Hard cap: max 25 predictions saved per run.
+No fixed count: the engine returns only strong, high-confidence single bets
+(one market per match). The number of predictions scales with how many sure
+picks the data actually supports — there is no minimum or maximum target.
 """
 
 import os
@@ -34,8 +36,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 FALLBACK_GEMINI_API_KEY = os.getenv("FALLBACK_GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-MAX_PREDICTIONS = 50  # Hard cap on daily predictions saved
-MIN_PREDICTIONS = 20  # Minimum target — retry if below this
+# No fixed count cap — quality-gated by confidence instead.
+# Only bets at or above this confidence are considered "sure" and kept.
+MIN_CONFIDENCE = 70
 
 
 # ============================================================================
@@ -225,7 +228,8 @@ PREDICTION_SCHEMA = {
 def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[dict]:
     """
     Phase 3: Send enriched fixtures (with search context) to Gemini for prediction.
-    Returns a list of prediction dicts (max 25).
+    Returns only strong, sure single bets (one market per match). No fixed count —
+    the engine skips any match that isn't a confident pick.
     """
 
     # ── Sort: Prioritize Top 8 European Leagues ────────────────────────────
@@ -267,15 +271,12 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
     if len(fixtures_text) > 60000:
         fixtures_text = fixtures_text[:60000] + "\n... (truncated)"
 
-    # Determine target based on available fixtures
     num_fixtures = len(enriched_fixtures)
-    target_min = min(15, num_fixtures)  # Can't predict more than we have
-    target_max = min(25, num_fixtures)
 
     prompt = f"""
     You are an elite football betting analyst and data scientist. Today is {today_str}.
 
-    Below is a list of {num_fixtures} football fixtures for today. Most have been enriched with 
+    Below is a list of {num_fixtures} football fixtures for today. Most have been enriched with
     REAL search snippets ("search_context") grabbed from recent match previews across the web.
     These snippets contain clues about recent form, injuries, xG, and tactical points.
 
@@ -284,12 +285,15 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
 
     YOUR TASK:
     1. Analyse ALL {num_fixtures} fixtures using the provided real-world search context — not general knowledge.
-    2. Select {target_min}–{target_max} highest-value, highest-confidence bets.
-       YOU MUST PROVIDE AT LEAST {target_min} PREDICTIONS. This is a strict minimum.
-       If there are {num_fixtures} fixtures available, you should predict on most of them.
+    2. Return ONLY the matches where the data supports a STRONG, SURE bet.
+       There is NO minimum and NO maximum number of predictions — quality is the only gate.
+       - If a match is unclear, risky, or not well supported by the search context, SKIP IT entirely.
+       - Do NOT force a prediction on every match. It is perfectly fine to return few predictions
+         if only a few matches are genuinely sure things.
+       - Equally, if many matches are strong and sure, include all of them.
     3. CRITICAL RULE: STRONGLY PRIORITIZE matches from the Top 8 European leagues (e.g., Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Primeira Liga, Eredivisie, Champions League, Europa League) if they are present in the list. The list is pre-sorted to show these top leagues first.
     4. CRITICAL RULE: You MUST select exactly ONE prediction per match. NEVER include the same
-       match (same home_team vs away_team) more than once. Pick the single best market for each match.
+       match (same home_team vs away_team) more than once. Pick the single best, safest market for each match.
     5. For each pick, base your reasoning EXPLICITLY on the search snippets provided:
        - Reference actual form mentions, specific player injuries, or stats highlighted.
        - Example reasoning: "Search snippets indicate Arsenal has won 4 of their last 5, while Chelsea is missing their starting CB due to injury."
@@ -301,7 +305,8 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
        - Over 2.5 Goals (only if both teams are statistically high-scoring/conceding)
        - BTTS - Yes/No
        Only suggest a straight win if there is a massive, statistically proven disparity.
-    7. Only include predictions with confidence ≥ 65.
+    7. STRICT: Only include a prediction if confidence ≥ {MIN_CONFIDENCE}. If you are not confident
+       a bet is a sure thing, DROP IT rather than lowering your standard.
     8. Prioritise "low" and "medium" risk picks. Include "high" risk only if strongly
        justified by the data.
 
@@ -324,9 +329,9 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
     DO NOT use "Yes" or "No" as the prediction value. The prediction must be self-descriptive.
     DO NOT append details to the market name (e.g. do NOT use "BTTS - Yes" as the market, use "BTTS").
 
-    OUTPUT: Return a JSON object with a "predictions" key containing {target_min}–{target_max} objects.
+    OUTPUT: Return a JSON object with a "predictions" key containing ONLY the sure bets you found
+    (however many that is — could be a handful or many). Do NOT pad the list to hit a number.
     REMEMBER: Each match must appear ONLY ONCE. No duplicate matches allowed.
-    You MUST return at least {target_min} predictions.
     Each object MUST have:
     - home_team: string (use the full official team name consistently)
     - away_team: string (use the full official team name consistently)
@@ -361,11 +366,13 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
                 logger.warning(f"Phase 3: Discarding hallucinated match {p.get('home_team')} vs {p.get('away_team')}")
         preds = valid_preds
 
-        # Hard cap
-        if len(preds) > MAX_PREDICTIONS:
-            preds.sort(key=lambda p: p.get("confidence", 0), reverse=True)
-            preds = preds[:MAX_PREDICTIONS]
-        logger.info(f"Phase 3: Gemini returned {len(preds)} unique data-driven predictions.")
+        # Quality gate: keep only sure bets (confidence >= MIN_CONFIDENCE). No count cap.
+        before = len(preds)
+        preds = [p for p in preds if p.get("confidence", 0) >= MIN_CONFIDENCE]
+        if before != len(preds):
+            logger.info(f"Phase 3: Dropped {before - len(preds)} picks below confidence {MIN_CONFIDENCE}.")
+        preds.sort(key=lambda p: p.get("confidence", 0), reverse=True)
+        logger.info(f"Phase 3: Gemini returned {len(preds)} unique sure-bet predictions.")
         return preds
     return []
 
@@ -442,7 +449,7 @@ def generate_predictions():
       2. Extract structured fixtures via Gemini
       3. Enrich each fixture with FBref stats
       4. Send enriched data to Gemini for prediction
-      5. Save top 50 predictions to DB
+      5. Save all sure-bet predictions to DB (no count cap)
     """
     logger.info("Starting prediction engine (v6 — Data-Driven with FBref Stats)...")
     db = SessionLocal()
@@ -518,11 +525,10 @@ def generate_predictions():
         saved_count = 0
         duplicate_count = 0
 
-        # Sort by confidence desc and take top MAX_PREDICTIONS
+        # Sort by confidence desc — no count cap, save every sure bet.
         all_preds.sort(key=lambda p: p.get("confidence", 0), reverse=True)
-        all_preds = all_preds[:MAX_PREDICTIONS]
 
-        logger.info(f"Saving top {len(all_preds)} predictions to database...")
+        logger.info(f"Saving {len(all_preds)} sure-bet predictions to database...")
 
         # Pre-load today's existing predictions for fast duplicate checks
         from sqlalchemy import cast, Date

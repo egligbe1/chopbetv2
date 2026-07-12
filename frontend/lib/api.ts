@@ -185,26 +185,40 @@ class ApiClient {
     return this.request(`/stats/daily?sport=${sport}&days=${days}`);
   }
 
-  // Admin
-  async triggerPredictions(adminKey: string): Promise<{ message: string }> {
+  // Admin auth
+  async adminLogin(username: string, password: string): Promise<{ access_token: string; token_type: string; username: string }> {
+    return this.request('/admin/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+  }
+
+  async adminMe(token: string): Promise<{ username: string }> {
+    return this.request('/admin/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  }
+
+  // Admin jobs
+  async triggerPredictions(token: string): Promise<{ message: string }> {
     return this.request('/admin/trigger-predictions', {
       method: 'POST',
-      headers: { 'X-Admin-Key': adminKey },
+      headers: { Authorization: `Bearer ${token}` },
     });
   }
 
 
-  async triggerResults(adminKey: string): Promise<{ message: string }> {
+  async triggerResults(token: string): Promise<{ message: string }> {
     return this.request('/admin/trigger-results', {
       method: 'POST',
-      headers: { 'X-Admin-Key': adminKey },
+      headers: { Authorization: `Bearer ${token}` },
     });
   }
 
-  async triggerClearPending(adminKey: string): Promise<{ message: string }> {
+  async triggerClearPending(token: string): Promise<{ message: string }> {
     return this.request('/admin/clear-pending', {
       method: 'POST',
-      headers: { 'X-Admin-Key': adminKey },
+      headers: { Authorization: `Bearer ${token}` },
     });
   }
 }

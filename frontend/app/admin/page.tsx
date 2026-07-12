@@ -2,34 +2,59 @@
 
 import { useState, FormEvent, useEffect } from 'react';
 import { api } from '@/lib/api';
-import { Shield, Play, RotateCcw, Lock, AlertCircle, CheckCircle2, RefreshCcw, Trash2 } from 'lucide-react';
+import { Shield, Play, RotateCcw, Lock, User, AlertCircle, CheckCircle2, RefreshCcw, Trash2 } from 'lucide-react';
 
 export default function AdminPage() {
-    const [adminKey, setAdminKey] = useState('');
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [token, setToken] = useState('');
     const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [checkingSession, setCheckingSession] = useState(true);
+    const [loggingIn, setLoggingIn] = useState(false);
     const [loadingKey, setLoadingKey] = useState<string | null>(null);
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
     useEffect(() => {
-        // Check if key is stored in session storage to persist across reloads
-        const storedKey = sessionStorage.getItem('admin_key');
-        if (storedKey) {
-            setAdminKey(storedKey);
-            setIsAuthenticated(true);
+        // Validate any stored token against the backend so expired sessions don't linger.
+        const storedToken = sessionStorage.getItem('admin_token');
+        if (!storedToken) {
+            setCheckingSession(false);
+            return;
         }
+        api.adminMe(storedToken)
+            .then(() => {
+                setToken(storedToken);
+                setIsAuthenticated(true);
+            })
+            .catch(() => {
+                sessionStorage.removeItem('admin_token');
+            })
+            .finally(() => setCheckingSession(false));
     }, []);
 
-    const handleLogin = (e: FormEvent) => {
+    const handleLogin = async (e: FormEvent) => {
         e.preventDefault();
-        if (adminKey.trim()) {
-            sessionStorage.setItem('admin_key', adminKey);
+        if (!username.trim() || !password.trim()) return;
+        setLoggingIn(true);
+        setMessage(null);
+        try {
+            const res = await api.adminLogin(username.trim(), password);
+            sessionStorage.setItem('admin_token', res.access_token);
+            setToken(res.access_token);
             setIsAuthenticated(true);
+            setPassword('');
+        } catch (err: any) {
+            setMessage({ type: 'error', text: err.message || 'Login failed. Please try again.' });
+        } finally {
+            setLoggingIn(false);
         }
     };
 
     const handleLogout = () => {
-        sessionStorage.removeItem('admin_key');
-        setAdminKey('');
+        sessionStorage.removeItem('admin_token');
+        setToken('');
+        setUsername('');
+        setPassword('');
         setIsAuthenticated(false);
         setMessage(null);
     };
@@ -41,19 +66,20 @@ export default function AdminPage() {
         try {
             let response;
             if (type === 'predictions') {
-                response = await api.triggerPredictions(adminKey);
+                response = await api.triggerPredictions(token);
             } else if (type === 'results') {
-                response = await api.triggerResults(adminKey);
+                response = await api.triggerResults(token);
             } else {
-                response = await api.triggerClearPending(adminKey);
+                response = await api.triggerClearPending(token);
             }
             setMessage({ type: 'success', text: response.message || `${type} job completed successfully.` });
         } catch (err: any) {
             console.error(`Error triggering ${type}:`, err);
-            // If error is related to invalid key, auto-logout
-            if (err.message && err.message.toLowerCase().includes('admin key')) {
+            const msg = (err.message || '').toLowerCase();
+            // Session expired / invalid token → force re-login
+            if (msg.includes('credentials') || msg.includes('session expired') || msg.includes('401')) {
                 handleLogout();
-                setMessage({ type: 'error', text: 'Invalid Admin Key. Please log in again.' });
+                setMessage({ type: 'error', text: 'Your session expired. Please log in again.' });
             } else {
                 setMessage({ type: 'error', text: err.message || `Failed to trigger ${type} job.` });
             }
@@ -63,6 +89,16 @@ export default function AdminPage() {
     };
 
     // ----- UI Render logic -----
+    // Validating a stored session
+    if (checkingSession) {
+        return (
+            <div className="flex flex-col items-center justify-center min-h-[60vh] text-muted-foreground">
+                <RefreshCcw className="animate-spin w-6 h-6 mb-3" />
+                <p className="text-sm">Checking session...</p>
+            </div>
+        );
+    }
+
     // Login State
     if (!isAuthenticated) {
         return (
@@ -73,7 +109,7 @@ export default function AdminPage() {
                             <Shield className="text-primary w-8 h-8" />
                         </div>
                         <h1 className="text-2xl font-black font-outfit">Admin Access</h1>
-                        <p className="text-sm text-muted-foreground">Enter your secure key to access the control panel.</p>
+                        <p className="text-sm text-muted-foreground">Sign in with your username and password to access the control panel.</p>
                     </div>
 
                     {message && message.type === 'error' && (
@@ -84,24 +120,43 @@ export default function AdminPage() {
                     )}
 
                     <form onSubmit={handleLogin} className="space-y-4">
-                        <div className="space-y-2">
-                            <div className="relative">
-                                <Lock className="absolute left-3 top-3 text-muted-foreground w-5 h-5" />
-                                <input
-                                    type="password"
-                                    value={adminKey}
-                                    onChange={(e) => setAdminKey(e.target.value)}
-                                    placeholder="Enter API Key"
-                                    className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                                    required
-                                />
-                            </div>
+                        <div className="relative">
+                            <User className="absolute left-3 top-3 text-muted-foreground w-5 h-5" />
+                            <input
+                                type="text"
+                                value={username}
+                                onChange={(e) => setUsername(e.target.value)}
+                                placeholder="Username"
+                                autoComplete="username"
+                                className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                                required
+                            />
+                        </div>
+                        <div className="relative">
+                            <Lock className="absolute left-3 top-3 text-muted-foreground w-5 h-5" />
+                            <input
+                                type="password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                placeholder="Password"
+                                autoComplete="current-password"
+                                className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                                required
+                            />
                         </div>
                         <button
                             type="submit"
-                            className="w-full bg-primary text-primary-foreground font-bold py-3 rounded-lg hover:opacity-90 transition-opacity"
+                            disabled={loggingIn}
+                            className="w-full bg-primary text-primary-foreground font-bold py-3 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
                         >
-                            Authenticate
+                            {loggingIn ? (
+                                <>
+                                    <RefreshCcw size={18} className="animate-spin" />
+                                    Signing in...
+                                </>
+                            ) : (
+                                'Sign In'
+                            )}
                         </button>
                     </form>
                 </div>

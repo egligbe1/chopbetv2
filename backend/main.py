@@ -8,6 +8,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from database import engine, Base
 from scheduler import start_scheduler, shutdown_scheduler
+from auth import seed_admin_user
 from routes.admin import router as admin_router
 from routes.predictions import router as predictions_router
 from routes.stats import router as stats_router
@@ -33,6 +34,7 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 async def lifespan(app: FastAPI):
     """Startup & shutdown lifecycle events."""
     logger.info("ChopBet API starting up...")
+    seed_admin_user()
     start_scheduler()
     yield
     logger.info("ChopBet API shutting down...")
@@ -56,7 +58,7 @@ app.add_middleware(
     allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3003", "http://localhost:3004", FRONTEND_URL],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Admin-Key"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
