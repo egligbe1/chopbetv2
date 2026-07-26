@@ -5,7 +5,7 @@ from google import genai
 from google.genai import types
 from datetime import datetime, UTC, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, exists
+from sqlalchemy import and_
 from database import SessionLocal
 from models import Prediction, Result, AccuracyStats
 from cache import invalidate_cache
@@ -143,20 +143,17 @@ def check_results():
     db = SessionLocal()
     
     try:
-        # Get all pending predictions (also look back 7 days to catch any missed ones, and include pending predictions that have results)
-        lookback_date = datetime.now(UTC) - timedelta(days=7)
+        # Check EVERY pending prediction whose match date has already arrived —
+        # not just recent ones — so predictions from earlier days can't linger
+        # pending forever. Future-dated fixtures are skipped (nothing to settle yet).
+        now_utc = datetime.now(UTC)
         pending = db.query(Prediction).filter(
-            and_(
-                Prediction.status == "pending",
-                or_(
-                    Prediction.date >= lookback_date,
-                    exists().where(Result.prediction_id == Prediction.id)
-                )
-            )
+            Prediction.status == "pending",
+            Prediction.date <= now_utc,
         ).all()
-        
+
         if not pending:
-            logger.info("No pending predictions within lookback period to check.")
+            logger.info("No pending predictions to check.")
             return
 
         # Group matches by date
@@ -269,7 +266,25 @@ def check_results():
                     _update_accuracy_stats(db, dt_obj, sport="football")
                 except Exception as e:
                     logger.error(f"Error updating stats for {dt_obj}: {e}")
-        
+
+        # Safety net: any prediction still pending well after kickoff (results are
+        # long available by now) is treated as unresolvable and voided, so stale
+        # picks don't sit pending forever. It got a settle attempt above first;
+        # nightly runs give it ~7 tries before this cutoff. Voids don't affect
+        # accuracy (only won/lost count), so no stats recompute is needed.
+        stale_cutoff = now_utc - timedelta(days=7)
+        stale = db.query(Prediction).filter(
+            Prediction.status == "pending",
+            Prediction.kickoff_time.isnot(None),
+            Prediction.kickoff_time < stale_cutoff,
+        ).all()
+        if stale:
+            for p in stale:
+                p.status = "void"
+                logger.info(f"Voiding stale unresolved prediction {p.id}: {p.home_team} vs {p.away_team} ({p.kickoff_time}).")
+            db.commit()
+            logger.info(f"Voided {len(stale)} stale pending predictions (>7 days past kickoff, unresolved).")
+
         # Invalidate cached prediction/stats responses so freshly settled
         # results (scores + won/lost statuses) surface immediately instead of
         # waiting for the Redis TTL to lapse.
