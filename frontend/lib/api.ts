@@ -199,6 +199,13 @@ class ApiClient {
     });
   }
 
+  async adminResetPassword(username: string, resetKey: string, newPassword: string): Promise<{ message: string }> {
+    return this.request('/admin/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ username, reset_key: resetKey, new_password: newPassword }),
+    });
+  }
+
   // Admin jobs
   async triggerPredictions(token: string): Promise<{ message: string }> {
     return this.request('/admin/trigger-predictions', {

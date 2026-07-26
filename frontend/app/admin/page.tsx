@@ -2,7 +2,7 @@
 
 import { useState, FormEvent, useEffect } from 'react';
 import { api } from '@/lib/api';
-import { Shield, Play, RotateCcw, Lock, User, AlertCircle, CheckCircle2, RefreshCcw, Trash2 } from 'lucide-react';
+import { Shield, Play, RotateCcw, Lock, User, KeyRound, AlertCircle, CheckCircle2, RefreshCcw, Trash2 } from 'lucide-react';
 
 export default function AdminPage() {
     const [username, setUsername] = useState('');
@@ -13,6 +13,13 @@ export default function AdminPage() {
     const [loggingIn, setLoggingIn] = useState(false);
     const [loadingKey, setLoadingKey] = useState<string | null>(null);
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+
+    // Break-glass password reset
+    const [showReset, setShowReset] = useState(false);
+    const [resetKey, setResetKey] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [resetting, setResetting] = useState(false);
 
     useEffect(() => {
         // Validate any stored token against the backend so expired sessions don't linger.
@@ -57,6 +64,50 @@ export default function AdminPage() {
         setPassword('');
         setIsAuthenticated(false);
         setMessage(null);
+    };
+
+    const openReset = () => {
+        setShowReset(true);
+        setMessage(null);
+        setResetKey('');
+        setNewPassword('');
+        setConfirmPassword('');
+    };
+
+    const cancelReset = () => {
+        setShowReset(false);
+        setMessage(null);
+        setResetKey('');
+        setNewPassword('');
+        setConfirmPassword('');
+    };
+
+    const handleReset = async (e: FormEvent) => {
+        e.preventDefault();
+        if (!username.trim() || !resetKey.trim() || !newPassword) return;
+        if (newPassword.length < 8) {
+            setMessage({ type: 'error', text: 'New password must be at least 8 characters.' });
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            setMessage({ type: 'error', text: 'Passwords do not match.' });
+            return;
+        }
+        setResetting(true);
+        setMessage(null);
+        try {
+            await api.adminResetPassword(username.trim(), resetKey.trim(), newPassword);
+            setShowReset(false);
+            setPassword('');
+            setResetKey('');
+            setNewPassword('');
+            setConfirmPassword('');
+            setMessage({ type: 'success', text: 'Password reset. Please log in with your new password.' });
+        } catch (err: any) {
+            setMessage({ type: 'error', text: err.message || 'Password reset failed.' });
+        } finally {
+            setResetting(false);
+        }
     };
 
     const triggerJob = async (type: 'predictions' | 'results' | 'clear-pending') => {
@@ -108,57 +159,147 @@ export default function AdminPage() {
                         <div className="h-16 w-16 bg-primary/20 rounded-full flex items-center justify-center mb-2">
                             <Shield className="text-primary w-8 h-8" />
                         </div>
-                        <h1 className="text-2xl font-black font-outfit">Admin Access</h1>
-                        <p className="text-sm text-muted-foreground">Sign in with your username and password to access the control panel.</p>
+                        <h1 className="text-2xl font-black font-outfit">{showReset ? 'Reset Password' : 'Admin Access'}</h1>
+                        <p className="text-sm text-muted-foreground">
+                            {showReset
+                                ? 'Enter your reset key and a new password to regain access.'
+                                : 'Sign in with your username and password to access the control panel.'}
+                        </p>
                     </div>
 
-                    {message && message.type === 'error' && (
-                        <div className="bg-danger/10 border border-danger/20 text-danger text-sm p-3 rounded-lg flex items-center gap-2">
-                            <AlertCircle size={16} />
+                    {message && (
+                        <div className={`text-sm p-3 rounded-lg flex items-center gap-2 border ${message.type === 'success'
+                            ? 'bg-success/10 border-success/20 text-success'
+                            : 'bg-danger/10 border-danger/20 text-danger'
+                            }`}>
+                            {message.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
                             {message.text}
                         </div>
                     )}
 
-                    <form onSubmit={handleLogin} className="space-y-4">
-                        <div className="relative">
-                            <User className="absolute left-3 top-3 text-muted-foreground w-5 h-5" />
-                            <input
-                                type="text"
-                                value={username}
-                                onChange={(e) => setUsername(e.target.value)}
-                                placeholder="Username"
-                                autoComplete="username"
-                                className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                                required
-                            />
-                        </div>
-                        <div className="relative">
-                            <Lock className="absolute left-3 top-3 text-muted-foreground w-5 h-5" />
-                            <input
-                                type="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                placeholder="Password"
-                                autoComplete="current-password"
-                                className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                                required
-                            />
-                        </div>
-                        <button
-                            type="submit"
-                            disabled={loggingIn}
-                            className="w-full bg-primary text-primary-foreground font-bold py-3 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
-                        >
-                            {loggingIn ? (
-                                <>
-                                    <RefreshCcw size={18} className="animate-spin" />
-                                    Signing in...
-                                </>
-                            ) : (
-                                'Sign In'
-                            )}
-                        </button>
-                    </form>
+                    {!showReset ? (
+                        <>
+                            <form onSubmit={handleLogin} className="space-y-4">
+                                <div className="relative">
+                                    <User className="absolute left-3 top-3 text-muted-foreground w-5 h-5" />
+                                    <input
+                                        type="text"
+                                        value={username}
+                                        onChange={(e) => setUsername(e.target.value)}
+                                        placeholder="Username"
+                                        autoComplete="username"
+                                        className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                                        required
+                                    />
+                                </div>
+                                <div className="relative">
+                                    <Lock className="absolute left-3 top-3 text-muted-foreground w-5 h-5" />
+                                    <input
+                                        type="password"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        placeholder="Password"
+                                        autoComplete="current-password"
+                                        className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                                        required
+                                    />
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={loggingIn}
+                                    className="w-full bg-primary text-primary-foreground font-bold py-3 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
+                                >
+                                    {loggingIn ? (
+                                        <>
+                                            <RefreshCcw size={18} className="animate-spin" />
+                                            Signing in...
+                                        </>
+                                    ) : (
+                                        'Sign In'
+                                    )}
+                                </button>
+                            </form>
+                            <button
+                                onClick={openReset}
+                                className="w-full text-center text-sm text-muted-foreground hover:text-primary transition-colors"
+                            >
+                                Forgot password?
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            <form onSubmit={handleReset} className="space-y-4">
+                                <div className="relative">
+                                    <User className="absolute left-3 top-3 text-muted-foreground w-5 h-5" />
+                                    <input
+                                        type="text"
+                                        value={username}
+                                        onChange={(e) => setUsername(e.target.value)}
+                                        placeholder="Username"
+                                        autoComplete="username"
+                                        className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                                        required
+                                    />
+                                </div>
+                                <div className="relative">
+                                    <KeyRound className="absolute left-3 top-3 text-muted-foreground w-5 h-5" />
+                                    <input
+                                        type="password"
+                                        value={resetKey}
+                                        onChange={(e) => setResetKey(e.target.value)}
+                                        placeholder="Reset key"
+                                        autoComplete="off"
+                                        className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                                        required
+                                    />
+                                </div>
+                                <div className="relative">
+                                    <Lock className="absolute left-3 top-3 text-muted-foreground w-5 h-5" />
+                                    <input
+                                        type="password"
+                                        value={newPassword}
+                                        onChange={(e) => setNewPassword(e.target.value)}
+                                        placeholder="New password (min 8 chars)"
+                                        autoComplete="new-password"
+                                        className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                                        required
+                                    />
+                                </div>
+                                <div className="relative">
+                                    <Lock className="absolute left-3 top-3 text-muted-foreground w-5 h-5" />
+                                    <input
+                                        type="password"
+                                        value={confirmPassword}
+                                        onChange={(e) => setConfirmPassword(e.target.value)}
+                                        placeholder="Confirm new password"
+                                        autoComplete="new-password"
+                                        className="w-full bg-white/5 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                                        required
+                                    />
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={resetting}
+                                    className="w-full bg-primary text-primary-foreground font-bold py-3 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2"
+                                >
+                                    {resetting ? (
+                                        <>
+                                            <RefreshCcw size={18} className="animate-spin" />
+                                            Resetting...
+                                        </>
+                                    ) : (
+                                        'Reset Password'
+                                    )}
+                                </button>
+                            </form>
+                            <button
+                                onClick={cancelReset}
+                                className="w-full text-center text-sm text-muted-foreground hover:text-primary transition-colors"
+                            >
+                                Back to sign in
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
         );

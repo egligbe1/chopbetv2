@@ -6,7 +6,13 @@ from gemini_engine import generate_predictions
 from results_checker import check_results
 from database import SessionLocal
 from models import Prediction
-from auth import authenticate_admin, create_access_token, get_current_admin
+from auth import (
+    authenticate_admin,
+    create_access_token,
+    get_current_admin,
+    reset_password_with_key,
+    ResetError,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -14,6 +20,12 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class ResetPasswordRequest(BaseModel):
+    username: str
+    reset_key: str
+    new_password: str
 
 
 class TokenResponse(BaseModel):
@@ -33,6 +45,16 @@ async def login(payload: LoginRequest):
         )
     token = create_access_token(user.username)
     return TokenResponse(access_token=token, username=user.username)
+
+
+@router.post("/reset-password")
+async def reset_password(payload: ResetPasswordRequest):
+    """Break-glass password reset gated by the shared ADMIN_RESET_KEY (no login required)."""
+    try:
+        reset_password_with_key(payload.username, payload.reset_key, payload.new_password)
+    except ResetError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {"message": "Password reset successfully. You can now log in with your new password."}
 
 
 @router.get("/me")

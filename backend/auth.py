@@ -7,6 +7,7 @@ Authentication utilities for the admin panel.
 """
 
 import os
+import hmac
 import logging
 from datetime import datetime, timedelta, UTC
 
@@ -25,6 +26,10 @@ logger = logging.getLogger(__name__)
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("ACCESS_TOKEN_EXPIRE_HOURS", "12"))
+
+# Break-glass password reset. When unset, the reset endpoint is disabled entirely.
+ADMIN_RESET_KEY = os.getenv("ADMIN_RESET_KEY", "")
+MIN_PASSWORD_LENGTH = 8
 
 if not JWT_SECRET_KEY:
     logger.warning(
@@ -86,6 +91,49 @@ def get_current_admin(token: str = Depends(oauth2_scheme)) -> str:
         if not user:
             raise credentials_exception
         return user.username
+    finally:
+        db.close()
+
+
+class ResetError(Exception):
+    """Raised when a break-glass password reset is rejected. `status` is the HTTP code to return."""
+
+    def __init__(self, message: str, status: int):
+        super().__init__(message)
+        self.message = message
+        self.status = status
+
+
+def reset_password_with_key(username: str, reset_key: str, new_password: str) -> None:
+    """
+    Break-glass reset: verify the shared ADMIN_RESET_KEY and set a new password.
+    Raises ResetError (with an HTTP status) on any failure.
+    """
+    if not ADMIN_RESET_KEY:
+        raise ResetError("Password reset is not enabled on this server.", 403)
+
+    # Constant-time comparison so the key can't be guessed via timing.
+    if not hmac.compare_digest(reset_key or "", ADMIN_RESET_KEY):
+        raise ResetError("Invalid reset key.", 401)
+
+    if len(new_password or "") < MIN_PASSWORD_LENGTH:
+        raise ResetError(f"New password must be at least {MIN_PASSWORD_LENGTH} characters.", 400)
+
+    db = SessionLocal()
+    try:
+        user = db.query(AdminUser).filter(AdminUser.username == username).first()
+        if not user:
+            raise ResetError("No admin account found with that username.", 404)
+        user.password_hash = hash_password(new_password)
+        db.commit()
+        logger.info(f"Password reset via break-glass key for admin '{username}'.")
+    except ResetError:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Password reset failed for '{username}': {e}")
+        raise ResetError("Password reset failed. Please try again.", 500)
     finally:
         db.close()
 
