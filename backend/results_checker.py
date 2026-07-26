@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, exists
 from database import SessionLocal
 from models import Prediction, Result, AccuracyStats
+from cache import invalidate_cache
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -99,7 +100,7 @@ def batch_check_results(date_str: str, matches: list) -> dict:
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-flash-latest",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
@@ -108,20 +109,23 @@ def batch_check_results(date_str: str, matches: list) -> dict:
             )
             data = json.loads(response.text.strip())
             results = data.get("results", [])
-            
+
             # Convert list back to match map for easier lookup downstream, normalizing match names
             match_results = {_normalize_match(r["match"]): r for r in results if "match" in r}
             logger.info(f"Gemini returned results for {len(match_results)} matches: {list(match_results.keys())}")
             return match_results
         except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            error_str = str(e)
+            # Retry on rate limits AND transient unavailability (503), matching
+            # the prediction engine's handling so a blip doesn't abort the run.
+            if any(code in error_str for code in ["429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE"]):
                 if attempt == 0 and FALLBACK_GEMINI_API_KEY:
-                    logger.warning("Primary quota exhausted. Switching to fallback Gemini API key.")
+                    logger.warning(f"Gemini issue ({error_str}). Switching to fallback API key.")
                     client = genai.Client(api_key=FALLBACK_GEMINI_API_KEY)
                     continue
                 if attempt < max_retries - 1:
                     sleep_time = 2 ** attempt * 10
-                    logger.warning(f"Rate limited (429). Retrying in {sleep_time} seconds (Attempt {attempt+1}/{max_retries})...")
+                    logger.warning(f"Gemini unavailable. Retrying in {sleep_time}s (attempt {attempt+1}/{max_retries})...")
                     time.sleep(sleep_time)
                     continue
             logger.error(f"Error checking results for {date_str}: {e}")
@@ -266,10 +270,15 @@ def check_results():
                 except Exception as e:
                     logger.error(f"Error updating stats for {dt_obj}: {e}")
         
+        # Invalidate cached prediction/stats responses so freshly settled
+        # results (scores + won/lost statuses) surface immediately instead of
+        # waiting for the Redis TTL to lapse.
+        invalidate_cache()
+
         logger.info("Results checking process completed successfully.")
 
-    except Exception as e:
-        logger.error(f"Error in results checker: {str(e)}")
+    except Exception:
+        logger.exception("Error in results checker")
         db.rollback()
     finally:
         db.close()

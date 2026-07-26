@@ -32,11 +32,18 @@ ADMIN_RESET_KEY = os.getenv("ADMIN_RESET_KEY", "")
 MIN_PASSWORD_LENGTH = 8
 
 if not JWT_SECRET_KEY:
-    logger.warning(
-        "JWT_SECRET_KEY is not set. Falling back to an insecure default — "
-        "set JWT_SECRET_KEY in your environment before deploying."
-    )
-    JWT_SECRET_KEY = "change-me-insecure-dev-secret"
+    _environment = os.getenv("ENVIRONMENT", "development").lower()
+    if _environment in ("dev", "development", "local"):
+        logger.warning(
+            "JWT_SECRET_KEY is not set. Using an insecure dev-only default. "
+            "This is refused outside a development environment."
+        )
+        JWT_SECRET_KEY = "change-me-insecure-dev-secret"
+    else:
+        raise RuntimeError(
+            "JWT_SECRET_KEY must be set in production. Refusing to start with an "
+            "insecure default signing key."
+        )
 
 # tokenUrl is informational (used by OpenAPI docs); login lives at /admin/login.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="admin/login")

@@ -1,10 +1,11 @@
 import os
 import json
+import inspect
 import logging
-import redis
 from functools import wraps
-from typing import Optional, Any
+from datetime import datetime, UTC
 from dotenv import load_dotenv
+import redis
 
 load_dotenv()
 
@@ -27,70 +28,96 @@ if REDIS_URL:
 else:
     logger.info("REDIS_URL not set. Caching is disabled by default.")
 
+
+def _build_cache_key(func_name: str, args: tuple, kwargs: dict) -> str:
+    """Build a stable cache key. Includes the current UTC date so cached
+    'today' payloads roll over automatically at UTC midnight instead of
+    serving the previous day until the TTL lapses."""
+    filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ("db", "request")}
+    key_parts = [func_name, datetime.now(UTC).strftime("%Y-%m-%d")]
+    if args:
+        key_parts.extend([str(a) for a in args])
+    if filtered_kwargs:
+        key_parts.append(json.dumps(filtered_kwargs, sort_keys=True))
+    return f"chopbet:{':'.join(key_parts)}"
+
+
+def _cache_get(cache_key: str):
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            logger.info(f"Cache hit for key: {cache_key}")
+            return json.loads(cached)
+    except Exception as e:
+        logger.warning(f"Redis get error: {e}")
+    return None
+
+
+def _cache_set(cache_key: str, value, expire: int):
+    try:
+        redis_client.setex(cache_key, expire, json.dumps(value))
+        logger.info(f"Cache miss. Stored result in: {cache_key}")
+    except Exception as e:
+        logger.warning(f"Redis set error: {e}")
+
+
 def cache_response(expire: int = 3600):
     """
-    Decorator to cache FastAPI route responses in Redis.
-    Default expiry is 1 hour (3600 seconds).
+    Decorator to cache FastAPI route responses in Redis (default 1 hour).
+
+    Preserves the wrapped function's sync/async nature: a sync route keeps a
+    sync wrapper so FastAPI runs it in its threadpool (never blocking the event
+    loop with DB/Redis I/O), and an async route keeps an async wrapper.
     """
     def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            import inspect
-            if not redis_client:
-                if inspect.iscoroutinefunction(func):
+        if inspect.iscoroutinefunction(func):
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                if not redis_client:
                     return await func(*args, **kwargs)
-                return func(*args, **kwargs)
-
-            # Create a unique cache key based on function name and arguments
-            # Filter out 'db' session and 'request' from key calculation
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ("db", "request")}
-            key_parts = [func.__name__]
-            if args:
-                key_parts.extend([str(a) for a in args])
-            if filtered_kwargs:
-                key_parts.append(json.dumps(filtered_kwargs, sort_keys=True))
-            
-            cache_key = f"chopbet:{':'.join(key_parts)}"
-
-            try:
-                cached_data = redis_client.get(cache_key)
-                if cached_data:
-                    logger.info(f"Cache hit for key: {cache_key}")
-                    return json.loads(cached_data)
-            except Exception as e:
-                logger.warning(f"Redis get error: {e}")
-
-            # Call the original function
-            # Check if it's a coroutine or regular function
-            import inspect
-            if inspect.iscoroutinefunction(func):
+                cache_key = _build_cache_key(func.__name__, args, kwargs)
+                cached = _cache_get(cache_key)
+                if cached is not None:
+                    return cached
                 result = await func(*args, **kwargs)
-            else:
-                result = func(*args, **kwargs)
+                _cache_set(cache_key, result, expire)
+                return result
+            return async_wrapper
 
-            try:
-                redis_client.setex(cache_key, expire, json.dumps(result))
-                logger.info(f"Cache miss. Stored result in: {cache_key}")
-            except Exception as e:
-                logger.warning(f"Redis set error: {e}")
-
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            if not redis_client:
+                return func(*args, **kwargs)
+            cache_key = _build_cache_key(func.__name__, args, kwargs)
+            cached = _cache_get(cache_key)
+            if cached is not None:
+                return cached
+            result = func(*args, **kwargs)
+            _cache_set(cache_key, result, expire)
             return result
-        return wrapper
+        return sync_wrapper
     return decorator
 
 
 def invalidate_cache(pattern: str = "chopbet:*"):
     """
-    Invalidates all keys matching the pattern.
-    Useful after new predictions are generated.
+    Invalidate all keys matching the pattern. Uses SCAN (non-blocking) rather
+    than KEYS so it never stalls a shared/managed Redis server.
     """
     if not redis_client:
         return
-    
+
     try:
-        keys = redis_client.keys(pattern)
-        if keys:
-            redis_client.delete(*keys)
-            logger.info(f"Invalidated {len(keys)} cache keys matching {pattern}")
+        deleted = 0
+        batch = []
+        for key in redis_client.scan_iter(match=pattern, count=500):
+            batch.append(key)
+            if len(batch) >= 500:
+                deleted += redis_client.delete(*batch)
+                batch = []
+        if batch:
+            deleted += redis_client.delete(*batch)
+        if deleted:
+            logger.info(f"Invalidated {deleted} cache keys matching {pattern}")
     except Exception as e:
         logger.warning(f"Redis invalidation error: {e}")

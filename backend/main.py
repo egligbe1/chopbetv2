@@ -3,9 +3,9 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from rate_limit import limiter
 from database import engine, Base
 from scheduler import start_scheduler, shutdown_scheduler
 from auth import seed_admin_user
@@ -23,11 +23,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Rate limiter: 60 requests per minute per IP
-limiter = Limiter(key_func=get_remote_address)
-
-# Allowed frontend origins
+# Allowed frontend origins.
+# Production origins come from CORS_ORIGINS (comma-separated) or FRONTEND_URL.
+# Localhost dev origins are only trusted when ENVIRONMENT is a dev value.
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+
+_origins: list[str] = []
+if os.getenv("CORS_ORIGINS"):
+    _origins.extend(o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip())
+if FRONTEND_URL:
+    _origins.append(FRONTEND_URL)
+if ENVIRONMENT in ("dev", "development", "local"):
+    _origins.extend([
+        "http://localhost:3000", "http://localhost:3001",
+        "http://localhost:3003", "http://localhost:3004",
+    ])
+# De-duplicate while preserving order
+ALLOWED_ORIGINS = list(dict.fromkeys(_origins))
 
 
 @asynccontextmanager
@@ -55,7 +68,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Configure CORS — restricted to frontend domain
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3003", "http://localhost:3004", FRONTEND_URL],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],

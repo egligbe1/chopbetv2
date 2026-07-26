@@ -616,8 +616,8 @@ def generate_predictions():
         # Invalidate cache so users see new predictions immediately
         invalidate_cache()
 
-    except Exception as e:
-        logger.error(f"Engine failure: {str(e)}")
+    except Exception:
+        logger.exception("Engine failure")
         db.rollback()
     finally:
         db.close()

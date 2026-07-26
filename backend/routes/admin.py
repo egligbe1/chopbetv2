@@ -1,11 +1,13 @@
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from gemini_engine import generate_predictions
 from results_checker import check_results
 from database import SessionLocal
 from models import Prediction
+from cache import invalidate_cache
+from rate_limit import limiter
 from auth import (
     authenticate_admin,
     create_access_token,
@@ -35,7 +37,8 @@ class TokenResponse(BaseModel):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest):
+@limiter.limit("5/minute")
+async def login(request: Request, payload: LoginRequest):
     """Authenticate an admin with username/password and return a JWT."""
     user = authenticate_admin(payload.username, payload.password)
     if not user:
@@ -48,7 +51,8 @@ async def login(payload: LoginRequest):
 
 
 @router.post("/reset-password")
-async def reset_password(payload: ResetPasswordRequest):
+@limiter.limit("5/hour")
+async def reset_password(request: Request, payload: ResetPasswordRequest):
     """Break-glass password reset gated by the shared ADMIN_RESET_KEY (no login required)."""
     try:
         reset_password_with_key(payload.username, payload.reset_key, payload.new_password)
@@ -92,6 +96,7 @@ async def clear_pending_predictions(admin: str = Depends(get_current_admin)):
     try:
         deleted_count = db.query(Prediction).filter(Prediction.status == "pending").delete()
         db.commit()
+        invalidate_cache()
         return {"message": f"Successfully deleted {deleted_count} pending predictions."}
     except Exception as e:
         db.rollback()

@@ -4,11 +4,13 @@ from sqlalchemy import and_, func
 from datetime import datetime, UTC, timedelta
 from database import get_db
 from models import Prediction, AccuracyStats
+from cache import cache_response
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
 
 @router.get("/accuracy")
+@cache_response(expire=1800)
 def get_overall_accuracy(sport: str = Query("football", description="Sport to fetch stats for"), db: Session = Depends(get_db)):
     """Get overall accuracy stats across all time."""
     all_settled = db.query(Prediction).filter(
@@ -73,6 +75,7 @@ def get_overall_accuracy(sport: str = Query("football", description="Sport to fe
 
 
 @router.get("/accuracy/league")
+@cache_response(expire=1800)
 def get_accuracy_by_league(sport: str = Query("football", description="Sport to fetch stats for"), db: Session = Depends(get_db)):
     """Get accuracy broken down by league."""
     settled = db.query(Prediction).filter(
@@ -102,6 +105,7 @@ def get_accuracy_by_league(sport: str = Query("football", description="Sport to 
 
 
 @router.get("/accuracy/market")
+@cache_response(expire=1800)
 def get_accuracy_by_market(sport: str = Query("football", description="Sport to fetch stats for"), db: Session = Depends(get_db)):
     """Get accuracy broken down by market type."""
     settled = db.query(Prediction).filter(
@@ -168,6 +172,7 @@ def normalize_market(market: str) -> str:
 
 
 @router.get("/daily")
+@cache_response(expire=1800)
 def get_daily_stats(
     sport: str = Query("football", description="Sport to fetch stats for"),
     days: int = 30,

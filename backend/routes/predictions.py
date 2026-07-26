@@ -112,7 +112,7 @@ def get_predictions_by_date(date: str, sport: str = Query("football", descriptio
     start_of_day = datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC)
     end_of_day = start_of_day + timedelta(days=1)
 
-    predictions = db.query(PredictionModel).filter(
+    predictions = db.query(PredictionModel).options(joinedload(PredictionModel.result)).filter(
         and_(
             PredictionModel.date >= start_of_day,
             PredictionModel.date < end_of_day,
@@ -162,35 +162,50 @@ def get_prediction_history(
         .scalar()
     )
 
-    days = []
+    # Normalize the page's distinct dates
+    page_dates = []
     for row in distinct_dates:
         pred_date = row.pred_date
         if isinstance(pred_date, str):
             pred_date = datetime.strptime(pred_date, "%Y-%m-%d").date()
+        page_dates.append(pred_date)
 
-        start = datetime(pred_date.year, pred_date.month, pred_date.day, tzinfo=UTC)
-        end = start + timedelta(days=1)
+    days = []
+    if page_dates:
+        # Fetch every prediction for the whole page's date span in ONE query
+        # (with results eager-loaded), then bucket by day in Python — avoids the
+        # previous N+1 of one query per day plus one per prediction.
+        span_start = datetime(min(page_dates).year, min(page_dates).month, min(page_dates).day, tzinfo=UTC)
+        span_end = datetime(max(page_dates).year, max(page_dates).month, max(page_dates).day, tzinfo=UTC) + timedelta(days=1)
 
-        preds = db.query(PredictionModel).filter(
+        all_preds = db.query(PredictionModel).options(joinedload(PredictionModel.result)).filter(
             and_(
-                PredictionModel.date >= start,
-                PredictionModel.date < end,
+                PredictionModel.date >= span_start,
+                PredictionModel.date < span_end,
                 PredictionModel.sport == sport
             )
-        ).all()
+        ).order_by(PredictionModel.kickoff_time.asc()).all()
 
-        settled = [p for p in preds if p.status in ("won", "lost")]
-        correct = sum(1 for p in settled if p.status == "won")
-        total_settled = len(settled)
+        buckets: dict = {d: [] for d in page_dates}
+        for p in all_preds:
+            d = p.date.date() if p.date else None
+            if d in buckets:
+                buckets[d].append(p)
 
-        days.append({
-            "date": pred_date.isoformat() if hasattr(pred_date, 'isoformat') else str(pred_date),
-            "total_predictions": len(preds),
-            "settled": total_settled,
-            "correct": correct,
-            "accuracy_pct": round((correct / total_settled) * 100, 1) if total_settled > 0 else None,
-            "predictions": [_serialize_prediction(p) for p in preds]
-        })
+        for pred_date in page_dates:
+            preds = buckets.get(pred_date, [])
+            settled = [p for p in preds if p.status in ("won", "lost")]
+            correct = sum(1 for p in settled if p.status == "won")
+            total_settled = len(settled)
+
+            days.append({
+                "date": pred_date.isoformat(),
+                "total_predictions": len(preds),
+                "settled": total_settled,
+                "correct": correct,
+                "accuracy_pct": round((correct / total_settled) * 100, 1) if total_settled > 0 else None,
+                "predictions": [_serialize_prediction(p) for p in preds]
+            })
 
     return {
         "page": page,
