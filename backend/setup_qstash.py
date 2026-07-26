@@ -24,9 +24,20 @@ import sys
 from pathlib import Path
 
 import requests
-from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=Path(__file__).parent / ".env")
+# Load .env — fall back to a tiny parser so this works even with the system
+# Python (no python-dotenv installed), e.g. `py setup_qstash.py`.
+_env_path = Path(__file__).parent / ".env"
+try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=_env_path)
+except ModuleNotFoundError:
+    if _env_path.exists():
+        for _line in _env_path.read_text(encoding="utf-8").splitlines():
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _, _v = _line.partition("=")
+                os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
 
 QSTASH_TOKEN = os.getenv("QSTASH_TOKEN")
 QSTASH_BASE = os.getenv("QSTASH_URL", "https://qstash.upstash.io").rstrip("/")
@@ -38,8 +49,8 @@ RESULTS_URL = f"{BACKEND_URL}/admin/cron/results"
 
 # (destination, cron) — cron in UTC
 SCHEDULES = [
-    (PREDICTIONS_URL, "0 7 * * *"),            # 07:00 UTC daily
-    (RESULTS_URL, "0 0,4,8,12,16,20 * * *"),   # every 4 hours
+    (PREDICTIONS_URL, "0 7 * * *"),          # generate predictions once, 07:00 UTC
+    (RESULTS_URL, "0 7,17,23 * * *"),        # check results at 07:00, 17:00, 23:00 UTC
 ]
 
 
