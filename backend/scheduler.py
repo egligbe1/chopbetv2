@@ -1,3 +1,4 @@
+import os
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -8,9 +9,22 @@ logger = logging.getLogger(__name__)
 
 scheduler = BackgroundScheduler()
 
+
+def _scheduler_enabled() -> bool:
+    return os.getenv("ENABLE_SCHEDULER", "true").lower() in ("true", "1", "yes")
+
+
 def start_scheduler():
-    """Starts the background scheduler with daily jobs."""
-    
+    """Starts the background scheduler with daily jobs.
+
+    Disabled when ENABLE_SCHEDULER is falsy — used on Render's free tier where
+    the service sleeps (an in-process scheduler can't fire while asleep). There,
+    an external scheduler (QStash) calls /admin/cron/* to run the jobs instead.
+    """
+    if not _scheduler_enabled():
+        logger.info("In-process scheduler disabled (ENABLE_SCHEDULER=false). Expecting external triggers (QStash) at /admin/cron/*.")
+        return
+
     # These jobs are long-running (scraping + multiple Gemini calls). Guard against
     # overlap and missed fires so a slow run or a restart near the trigger can't
     # spawn concurrent runs or silently skip.
@@ -46,6 +60,7 @@ def start_scheduler():
     logger.info("Scheduler started: football predictions at 07:00 UTC, results check every 4h (00/04/08/12/16/20 UTC).")
 
 def shutdown_scheduler():
-    """Shuts down the scheduler."""
-    scheduler.shutdown()
-    logger.info("Scheduler shut down.")
+    """Shuts down the scheduler if it was started."""
+    if scheduler.running:
+        scheduler.shutdown()
+        logger.info("Scheduler shut down.")

@@ -1,5 +1,7 @@
+import os
+import hmac
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 
 from gemini_engine import generate_predictions
@@ -17,6 +19,18 @@ from auth import (
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+# Shared secret for external cron callers (QStash). When unset, cron endpoints
+# are disabled. This lets an external scheduler wake the backend and run jobs
+# so the service can sleep between them (Render free-tier hour budget).
+CRON_SECRET = os.getenv("CRON_SECRET", "")
+
+
+def verify_cron_secret(x_cron_secret: str = Header(default="")):
+    if not CRON_SECRET:
+        raise HTTPException(status_code=503, detail="Cron endpoints are disabled (CRON_SECRET not set).")
+    if not hmac.compare_digest(x_cron_secret, CRON_SECRET):
+        raise HTTPException(status_code=401, detail="Invalid cron secret.")
 
 
 class LoginRequest(BaseModel):
@@ -87,6 +101,23 @@ async def trigger_results(admin: str = Depends(get_current_admin)):
         return {"message": "Results check completed successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/cron/predictions", status_code=202)
+async def cron_predictions(background: BackgroundTasks, _=Depends(verify_cron_secret)):
+    """External-cron (QStash) entrypoint to generate predictions. Returns 202
+    immediately and runs the job in a background thread so the caller doesn't
+    time out; the service stays awake until the job finishes, then idles."""
+    background.add_task(generate_predictions)
+    return {"message": "Prediction generation started."}
+
+
+@router.post("/cron/results", status_code=202)
+async def cron_results(background: BackgroundTasks, _=Depends(verify_cron_secret)):
+    """External-cron (QStash) entrypoint to check results. Returns 202 immediately
+    and runs the job in a background thread."""
+    background.add_task(check_results)
+    return {"message": "Results check started."}
 
 
 @router.post("/clear-pending")
