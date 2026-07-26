@@ -11,7 +11,9 @@ import {
   TrendingUp,
   RefreshCcw,
   AlertCircle,
-  BarChart2
+  BarChart2,
+  Zap,
+  ChevronDown
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -22,6 +24,7 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [sport, setSport] = useState<string>('football');
+  const [showAccumulator, setShowAccumulator] = useState(false);
   const dataRef = useRef<DailySummary | null>(null);
 
   const fetchData = useCallback(async (isBackground = false) => {
@@ -140,13 +143,26 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Accumulator Section */}
+      {/* Top Picks (Super Acca) — hidden until the user asks for it */}
       {accumulator != null && (accumulator.predictions?.length ?? 0) > 0 && (
-        <AccumulatorCard
-          predictions={accumulator.predictions}
-          totalOdds={accumulator.total_odds}
-          date={format(parseLocalDate(accumulator.date), 'MMMM do')}
-        />
+        <div className="space-y-4">
+          <button
+            onClick={() => setShowAccumulator((v) => !v)}
+            aria-expanded={showAccumulator}
+            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-primary/10 hover:bg-primary/20 border border-primary/20 text-primary font-bold px-5 py-3 rounded-xl transition-colors"
+          >
+            <Zap size={18} className="fill-current" />
+            {showAccumulator ? 'Hide Top Picks' : 'Show Daily Super Acca'}
+            <ChevronDown size={18} className={`transition-transform ${showAccumulator ? 'rotate-180' : ''}`} />
+          </button>
+          {showAccumulator && (
+            <AccumulatorCard
+              predictions={accumulator.predictions}
+              totalOdds={accumulator.total_odds}
+              date={format(parseLocalDate(accumulator.date), 'MMMM do')}
+            />
+          )}
+        </div>
       )}
 
       {/* Summary Dashboard */}
@@ -179,9 +195,9 @@ export default function HomePage() {
 
       {/* Content Area */}
       {sortedLeagueEntries.length > 0 ? (
-        <div className="space-y-14">
+        <div className="space-y-10">
           {sortedLeagueEntries.map(([league, preds]) => (
-            <LeagueGroup key={league} league={league} predictions={preds} />
+            <LeagueGroup key={league} league={league} predictions={preds} layout="list" />
           ))}
         </div>
       ) : (
