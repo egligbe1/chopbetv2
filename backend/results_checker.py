@@ -60,6 +60,13 @@ def _extract_relevant_text(text: str, matches: list, window: int = 500, cap: int
     return "\n...\n".join(text[s:e] for s, e in merged)[:cap]
 
 
+def _clear_live(prediction) -> None:
+    """Clear a prediction's live snapshot (once settled/voided it's no longer live)."""
+    prediction.live_home = None
+    prediction.live_away = None
+    prediction.live_status = None
+
+
 def batch_check_results(date_str: str, matches: list) -> dict:
     """
     Sends the BBC text for a specific date to Gemini to retrieve
@@ -104,19 +111,25 @@ def batch_check_results(date_str: str, matches: list) -> dict:
     - "Live" (if the match is currently playing but not finished)
     - "Pending" (if it hasn't started yet)
 
+    Also provide `cur_home` and `cur_away` = the CURRENT score shown right now:
+    - For a "Live" match, this is the live in-play score.
+    - For a "Finished" match, it equals the FT score.
+    - null if the match hasn't started.
+
     RAW MATCH RESULTS TEXT:
     {combined_text}
-    
+
     OUTPUT REQUIREMENTS:
     Return ONLY a JSON object mapping the match string to its results.
-    Format exactly like this (If a match is postponed or hasn't finished, omit it or set scores to null):
+    Format exactly like this (If a match is postponed or hasn't finished, omit or null the FT scores):
     {{
         "Arsenal vs Chelsea": {{
-            "ht_home": 1, "ht_away": 0, "ft_home": 2, "ft_away": 1, "match_status": "Finished"
+            "ht_home": 1, "ht_away": 0, "ft_home": 2, "ft_away": 1,
+            "cur_home": 2, "cur_away": 1, "match_status": "Finished"
         }}
     }}
     """
-    
+
     schema = {
         "type": "OBJECT",
         "properties": {
@@ -130,6 +143,8 @@ def batch_check_results(date_str: str, matches: list) -> dict:
                         "ht_away": {"type": "INTEGER", "nullable": True},
                         "ft_home": {"type": "INTEGER", "nullable": True},
                         "ft_away": {"type": "INTEGER", "nullable": True},
+                        "cur_home": {"type": "INTEGER", "nullable": True},
+                        "cur_away": {"type": "INTEGER", "nullable": True},
                         "match_status": {"type": "STRING", "nullable": True},
                     },
                     # Only match is required. Score fields are null if match isn't finished.
@@ -239,16 +254,18 @@ def check_results():
                     logger.info(f"Gemini result for {match_str}: {res}")
                     ht_h, ht_a = res.get("ht_home"), res.get("ht_away")
                     ft_h, ft_a = res.get("ft_home"), res.get("ft_away")
+                    cur_h, cur_a = res.get("cur_home"), res.get("cur_away")
                     m_status = (res.get("match_status") or "").lower()
-                    
+
                     # 1. Check if match was explicitly voided/abandoned
                     if any(s in m_status for s in ["postponed", "cancelled", "abandoned", "void"]):
                         for p in m_group["predictions"]:
                             p.status = "void"
+                            _clear_live(p)
                             logger.info(f"Updated {match_str} ({p.market}): Match {m_status.upper()} -> void")
                         continue
 
-                    # 2. Match must be finished to settle results
+                    # 2. Match must be finished to settle results (FT scores only)
                     if any(s in m_status for s in ["finished", "ft", "aet", "penalties", "full time", "full-time"]):
                         if ft_h is not None and ft_a is not None:
                             all_updated_dates.add(date_str)
@@ -270,12 +287,20 @@ def check_results():
                                      existing_res.ht_score_away = ht_a
                                      existing_res.ft_score_home = ft_h
                                      existing_res.ft_score_away = ft_a
-                                     
+
                                  new_status = _evaluate_prediction(p, ht_h, ht_a, ft_h, ft_a)
                                  p.status = new_status
+                                 _clear_live(p)  # settled — no longer live
                                  logger.info(f"Updated {match_str} ({p.market}) ID {p.id}: HT {ht_h}-{ht_a}, FT {ft_h}-{ft_a} -> {p.status}")
                         else:
                             logger.info(f"Scores incomplete for {match_str} despite '{m_status}' status, keeping pending.")
+                    elif "live" in m_status and cur_h is not None and cur_a is not None:
+                        # In-play: snapshot the live score for display only. NEVER settle.
+                        for p in m_group["predictions"]:
+                            p.live_home = cur_h
+                            p.live_away = cur_a
+                            p.live_status = "LIVE"
+                        logger.info(f"Live snapshot {match_str}: {cur_h}-{cur_a} (still pending).")
                     else:
                         logger.info(f"Match {match_str} status is '{m_status}', keeping as pending.")
 

@@ -24,6 +24,9 @@ export interface Prediction {
   reasoning: string;
   risk_rating: string;
   status: 'pending' | 'won' | 'lost' | 'void';
+  live_home: number | null;
+  live_away: number | null;
+  live_status: string | null;
   created_at: string;
   result: PredictionResult | null;
 }

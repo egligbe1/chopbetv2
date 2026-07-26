@@ -30,6 +30,10 @@ export function PredictionCard({ prediction, layout = 'grid' }: PredictionCardPr
         void: <AlertCircle className="text-muted-foreground" size={20} />,
     };
 
+    // In-play snapshot (display only — predictions still settle on FT).
+    const isLive = prediction.status === 'pending'
+        && prediction.live_home != null && prediction.live_away != null;
+
     if (layout === 'list') {
         return (
             <div className="group bg-white/[0.02] hover:bg-white/[0.05] border border-white/[0.05] rounded-xl transition-all overflow-hidden">
@@ -46,10 +50,15 @@ export function PredictionCard({ prediction, layout = 'grid' }: PredictionCardPr
                             {prediction.home_team}
                         </span>
 
-                        <div className="px-2 py-1 w-[56px] shrink-0 flex justify-center items-center font-black text-[13px] bg-black/20 rounded-md border border-white/5">
+                        <div className={cn(
+                            "px-2 py-1 w-[56px] shrink-0 flex justify-center items-center font-black text-[13px] rounded-md border",
+                            isLive ? "bg-red-500/10 border-red-500/20" : "bg-black/20 border-white/5"
+                        )}>
                             {prediction.status !== 'pending' && prediction.result
                                 ? <span className="text-primary tabular-nums">{prediction.result.ft_score_home}-{prediction.result.ft_score_away}</span>
-                                : <span className="text-muted-foreground/40 text-[10px]">vs</span>}
+                                : isLive
+                                    ? <span className="text-red-400 tabular-nums">{prediction.live_home}-{prediction.live_away}</span>
+                                    : <span className="text-muted-foreground/40 text-[10px]">vs</span>}
                         </div>
 
                         <span className="flex-1 text-left font-bold text-[13px] pl-2 truncate transition-colors group-hover:text-white">
@@ -57,12 +66,20 @@ export function PredictionCard({ prediction, layout = 'grid' }: PredictionCardPr
                         </span>
                     </div>
 
-                    {/* Status icon */}
-                    <div className="shrink-0 w-5 flex justify-center">
-                        {prediction.status === 'won' && <CheckCircle2 className="text-success" size={16} />}
-                        {prediction.status === 'lost' && <XCircle className="text-danger" size={16} />}
-                        {prediction.status === 'pending' && <Clock className="text-warning" size={16} />}
-                        {prediction.status === 'void' && <AlertCircle className="text-muted-foreground" size={16} />}
+                    {/* Status icon / LIVE badge */}
+                    <div className="shrink-0 flex justify-center items-center">
+                        {isLive ? (
+                            <span className="flex items-center gap-1 text-red-400 text-[9px] font-black uppercase tracking-wide">
+                                <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />LIVE
+                            </span>
+                        ) : (
+                            <span className="w-5 flex justify-center">
+                                {prediction.status === 'won' && <CheckCircle2 className="text-success" size={16} />}
+                                {prediction.status === 'lost' && <XCircle className="text-danger" size={16} />}
+                                {prediction.status === 'pending' && <Clock className="text-warning" size={16} />}
+                                {prediction.status === 'void' && <AlertCircle className="text-muted-foreground" size={16} />}
+                            </span>
+                        )}
                     </div>
                 </div>
 
@@ -92,31 +109,41 @@ export function PredictionCard({ prediction, layout = 'grid' }: PredictionCardPr
                         <span className="mx-0.5 sm:mx-1">•</span>
                         <span className="truncate max-w-[120px] sm:max-w-none">{prediction.league}</span>
                     </div>
-                    <div className={cn(
-                        "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border",
-                        getRiskColor(prediction.risk_rating)
-                    )}>
-                        {prediction.risk_rating} Risk
-                    </div>
+                    {isLive ? (
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase border border-red-500/30 bg-red-500/10 text-red-400">
+                            <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />Live
+                        </div>
+                    ) : (
+                        <div className={cn(
+                            "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border",
+                            getRiskColor(prediction.risk_rating)
+                        )}>
+                            {prediction.risk_rating} Risk
+                        </div>
+                    )}
                 </div>
 
                 {/* Match Teams */}
                 <div className="flex flex-col gap-0.5 sm:gap-1 mb-3 sm:mb-5">
                     <h3 className="text-base sm:text-lg font-bold flex items-center justify-between">
                         <span className="truncate">{prediction.home_team}</span>
-                        {prediction.status !== 'pending' && prediction.result && (
+                        {prediction.status !== 'pending' && prediction.result ? (
                             <span className="text-primary tabular-nums ml-2">
                                 {prediction.result.ft_score_home}
                             </span>
-                        )}
+                        ) : isLive ? (
+                            <span className="text-red-400 tabular-nums ml-2">{prediction.live_home}</span>
+                        ) : null}
                     </h3>
                     <h3 className="text-base sm:text-lg font-bold flex items-center justify-between">
                         <span className="truncate">{prediction.away_team}</span>
-                        {prediction.status !== 'pending' && prediction.result && (
+                        {prediction.status !== 'pending' && prediction.result ? (
                             <span className="text-primary tabular-nums ml-2">
                                 {prediction.result.ft_score_away}
                             </span>
-                        )}
+                        ) : isLive ? (
+                            <span className="text-red-400 tabular-nums ml-2">{prediction.live_away}</span>
+                        ) : null}
                     </h3>
                 </div>
 

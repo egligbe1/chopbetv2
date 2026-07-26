@@ -22,6 +22,10 @@ class Prediction(Base):
     odds = Column(Float, nullable=True)  # Decimal odds (e.g. 1.85)
     source_link = Column(String, nullable=True)  # Link to real schedule/source
     status = Column(String, default="pending", index=True)  # pending / won / lost / void
+    # Live snapshot captured during results runs (display only; never used to settle).
+    live_home = Column(Integer, nullable=True)
+    live_away = Column(Integer, nullable=True)
+    live_status = Column(String, nullable=True)  # e.g. "LIVE", "HT", "1H", "2H"
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     result = relationship("Result", back_populates="prediction", uselist=False)
