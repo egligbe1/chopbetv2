@@ -33,9 +33,7 @@ const AccumulatorCard: React.FC<AccumulatorCardProps> = ({ predictions, totalOdd
                 </div>
 
                 <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-                    {predictions.map((p) => {
-                    const isLive = p.status === 'pending' && p.live_home != null && p.live_away != null;
-                    return (
+                    {predictions.map((p) => (
                         <div key={p.id} className="group relative rounded-xl sm:rounded-2xl bg-slate-900/50 p-3 sm:p-4 transition-all hover:bg-slate-800/50">
                             <div className="mb-2 flex items-center justify-between">
                                 <div className="flex items-center gap-2">
@@ -47,29 +45,20 @@ const AccumulatorCard: React.FC<AccumulatorCardProps> = ({ predictions, totalOdd
                                     )}
                                 </div>
                                 <div className="flex items-center gap-2">
-                                    {isLive && (
-                                        <span className="flex items-center gap-1 text-red-400 text-[9px] font-black uppercase">
-                                            <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />Live
-                                        </span>
-                                    )}
                                     {p.status === 'won' && <CheckCircle2 className="h-3 w-3 text-green-400" />}
                                     {p.status === 'lost' && <XCircle className="h-3 w-3 text-red-400" />}
-                                    {p.status === 'pending' && !isLive && <Clock className="h-3 w-3 text-yellow-400" />}
+                                    {p.status === 'pending' && <Clock className="h-3 w-3 text-yellow-400" />}
                                     <span className="rounded-md bg-indigo-500/20 px-2 py-0.5 text-xs font-bold text-indigo-300">@{p.odds.toFixed(2)}</span>
                                 </div>
                             </div>
                             <div className="flex flex-col gap-1 text-sm font-bold text-white">
                                 <div className="flex justify-between">
                                     <span className="truncate pr-2">{p.home_team}</span>
-                                    {p.status !== 'pending' && p.result
-                                        ? <span className="text-indigo-400">{p.result.ft_score_home}</span>
-                                        : isLive ? <span className="text-red-400">{p.live_home}</span> : null}
+                                    {p.status !== 'pending' && p.result && <span className="text-indigo-400">{p.result.ft_score_home}</span>}
                                 </div>
                                 <div className="flex justify-between">
                                     <span className="truncate pr-2">{p.away_team}</span>
-                                    {p.status !== 'pending' && p.result
-                                        ? <span className="text-indigo-400">{p.result.ft_score_away}</span>
-                                        : isLive ? <span className="text-red-400">{p.live_away}</span> : null}
+                                    {p.status !== 'pending' && p.result && <span className="text-indigo-400">{p.result.ft_score_away}</span>}
                                 </div>
                             </div>
                             <div className="mt-2 flex items-center gap-2 rounded bg-white/5 px-2 py-1">
@@ -77,8 +66,7 @@ const AccumulatorCard: React.FC<AccumulatorCardProps> = ({ predictions, totalOdd
                                 <span className="text-xs font-black text-white shrink-0">{formatPrediction(p.market, p.prediction)}</span>
                             </div>
                         </div>
-                    );
-                    })}
+                    ))}
                 </div>
 
                 <div className="mt-5 sm:mt-8 flex items-center justify-center gap-2 rounded-xl bg-indigo-600/20 py-2 sm:py-3 text-center">

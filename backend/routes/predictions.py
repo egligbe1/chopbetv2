@@ -244,9 +244,6 @@ def _serialize_prediction(p):
         "reasoning": p.reasoning,
         "risk_rating": p.risk_rating,
         "status": p.status,
-        "live_home": p.live_home,
-        "live_away": p.live_away,
-        "live_status": p.live_status,
         "created_at": p.created_at.isoformat() if p.created_at else None,
         "result": result_data
     }
