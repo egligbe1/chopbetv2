@@ -1,7 +1,7 @@
 import React from 'react';
-import { Prediction } from '../lib/api';
-import { TrendingUp, ShieldCheck, Zap, ExternalLink, CheckCircle2, XCircle, Clock } from 'lucide-react';
-import { formatMarket } from '../lib/utils';
+import { Prediction } from '@/lib/api';
+import { ShieldCheck, Zap, ExternalLink, CheckCircle2, XCircle, Clock } from 'lucide-react';
+import { formatMarket, formatPrediction } from '@/lib/utils';
 
 interface AccumulatorCardProps {
     predictions: Prediction[];
@@ -33,13 +33,13 @@ const AccumulatorCard: React.FC<AccumulatorCardProps> = ({ predictions, totalOdd
                 </div>
 
                 <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-                    {predictions.map((p, idx) => (
+                    {predictions.map((p) => (
                         <div key={p.id} className="group relative rounded-xl sm:rounded-2xl bg-slate-900/50 p-3 sm:p-4 transition-all hover:bg-slate-800/50">
                             <div className="mb-2 flex items-center justify-between">
                                 <div className="flex items-center gap-2">
                                     <span className="text-[10px] font-medium text-slate-500">{p.league}</span>
                                     {p.source_link && (
-                                        <a href={p.source_link} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 transition-colors">
+                                        <a href={p.source_link} target="_blank" rel="noopener noreferrer" aria-label={`Open source for ${p.home_team} vs ${p.away_team} (opens in new tab)`} className="text-indigo-400 hover:text-indigo-300 transition-colors">
                                             <ExternalLink size={10} />
                                         </a>
                                     )}
@@ -63,14 +63,8 @@ const AccumulatorCard: React.FC<AccumulatorCardProps> = ({ predictions, totalOdd
                             </div>
                             <div className="mt-2 flex items-center gap-2 rounded bg-white/5 px-2 py-1">
                                 <span className="text-xs font-semibold text-indigo-400 truncate tracking-tight">{formatMarket(p.market)}:</span>
-                                <span className="text-xs font-black text-white shrink-0">{p.prediction}</span>
+                                <span className="text-xs font-black text-white shrink-0">{formatPrediction(p.market, p.prediction)}</span>
                             </div>
-
-                            {idx < predictions.length - 1 && (
-                                <div className="absolute -bottom-2 left-1/2 hidden -translate-x-1/2 md:block">
-                                    {/* Visual connector indicator could go here */}
-                                </div>
-                            )}
                         </div>
                     ))}
                 </div>

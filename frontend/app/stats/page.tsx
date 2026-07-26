@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import { formatMarket } from '@/lib/utils';
 import { api, type AccuracyStats, type DailyChartData, type LeagueAccuracy, type MarketAccuracy } from '@/lib/api';
@@ -27,36 +27,56 @@ export default function StatisticsPage() {
     const [marketData, setMarketData] = useState<MarketAccuracy | null>(null);
     const [chartData, setChartData] = useState<DailyChartData[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
     const [sport, setSport] = useState<string>('football');
 
-    useEffect(() => {
-        async function fetchStats() {
-            try {
-                setLoading(true);
-                const [overall, league, market, daily] = await Promise.all([
-                    api.getOverallAccuracy(sport),
-                    api.getAccuracyByLeague(sport),
-                    api.getAccuracyByMarket(sport),
-                    api.getDailyChartData(sport, 14)
-                ]);
-                setStats(overall);
-                setLeagueData(league.by_league);
-                setMarketData(market.by_market);
-                setChartData(daily.stats);
-            } catch (err) {
-                console.error('Failed to fetch stats:', err);
-            } finally {
-                setLoading(false);
-            }
+    const fetchStats = useCallback(async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const [overall, league, market, daily] = await Promise.all([
+                api.getOverallAccuracy(sport),
+                api.getAccuracyByLeague(sport),
+                api.getAccuracyByMarket(sport),
+                api.getDailyChartData(sport, 14)
+            ]);
+            setStats(overall);
+            setLeagueData(league.by_league);
+            setMarketData(market.by_market);
+            setChartData(daily.stats);
+        } catch (err) {
+            console.error('Failed to fetch stats:', err);
+            setError('Failed to load statistics. Please try again.');
+        } finally {
+            setLoading(false);
         }
-        fetchStats();
     }, [sport]);
+
+    useEffect(() => {
+        fetchStats();
+    }, [fetchStats]);
 
     if (loading) {
         return (
             <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="h-10 w-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
                 <p className="text-muted-foreground">Crunching the numbers...</p>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center max-w-md mx-auto">
+                <AlertCircle className="text-danger" size={40} />
+                <h2 className="text-xl font-bold">Couldn't load analytics</h2>
+                <p className="text-muted-foreground">{error}</p>
+                <button
+                    onClick={() => fetchStats()}
+                    className="mt-2 px-6 py-2 bg-primary text-primary-foreground rounded-lg font-bold hover:opacity-90 transition-opacity"
+                >
+                    Try Again
+                </button>
             </div>
         );
     }
@@ -126,8 +146,8 @@ export default function StatisticsPage() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                 <StatCard
                     label="Overall Accuracy"
-                    value={`${stats?.accuracy_pct}%`}
-                    subtext={`Across ${stats?.total_predictions} picks`}
+                    value={`${stats?.accuracy_pct ?? 0}%`}
+                    subtext={`Across ${stats?.total_predictions ?? 0} picks`}
                     icon={<ShieldCheck className="text-primary" />}
                 />
                 <StatCard
@@ -188,11 +208,11 @@ export default function StatisticsPage() {
                     <div className="space-y-4">
                         <div className="p-4 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between">
                             <span className="text-sm font-medium text-muted-foreground">Total Correct</span>
-                            <span className="text-lg font-bold text-success font-outfit">{stats?.correct}</span>
+                            <span className="text-lg font-bold text-success font-outfit">{stats?.correct ?? 0}</span>
                         </div>
                         <div className="p-4 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between">
                             <span className="text-sm font-medium text-muted-foreground">Total Incorrect</span>
-                            <span className="text-lg font-bold text-danger font-outfit">{stats?.incorrect}</span>
+                            <span className="text-lg font-bold text-danger font-outfit">{stats?.incorrect ?? 0}</span>
                         </div>
                         <div className="flex items-start gap-4 p-4 rounded-xl bg-primary/5 border border-primary/10">
                             <AlertCircle size={20} className="text-primary mt-0.5 shrink-0" />

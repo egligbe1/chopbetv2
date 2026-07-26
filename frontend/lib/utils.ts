@@ -1,8 +1,46 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import type { Prediction } from './api';
 
 export function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
+}
+
+/**
+ * Parse a date-only string ("YYYY-MM-DD") as LOCAL midnight.
+ * `new Date("2026-07-26")` parses as UTC midnight, which renders as the
+ * previous day for anyone west of UTC. This avoids that off-by-one.
+ */
+export function parseLocalDate(dateStr: string): Date {
+    if (!dateStr) return new Date(NaN);
+    const [y, m, d] = dateStr.split('-').map(Number);
+    if (!y || !m || !d) return new Date(dateStr);
+    return new Date(y, m - 1, d);
+}
+
+const LEAGUE_PRIORITY = [
+    'Premier League', 'Champions League', 'La Liga', 'Serie A',
+    'Bundesliga', 'Ligue 1', 'Europa League',
+];
+
+/**
+ * Group predictions by league and sort leagues with the top competitions first.
+ * Shared by the home and results pages so ordering stays consistent.
+ */
+export function groupAndSortByLeague(predictions: Prediction[]): [string, Prediction[]][] {
+    const grouped = predictions.reduce((acc, p) => {
+        (acc[p.league] ||= []).push(p);
+        return acc;
+    }, {} as Record<string, Prediction[]>);
+
+    return Object.entries(grouped).sort(([a], [b]) => {
+        const idxA = LEAGUE_PRIORITY.findIndex(l => a.toLowerCase().includes(l.toLowerCase()));
+        const idxB = LEAGUE_PRIORITY.findIndex(l => b.toLowerCase().includes(l.toLowerCase()));
+        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+        if (idxA !== -1) return -1;
+        if (idxB !== -1) return 1;
+        return a.localeCompare(b);
+    });
 }
 
 export function formatMarket(market: string) {

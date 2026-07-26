@@ -1,8 +1,6 @@
 'use client';
 
-import { useState } from 'react';
-import { ChevronDown, ChevronUp, Clock, Info, Trophy, AlertCircle, CheckCircle2, XCircle, ExternalLink } from 'lucide-react';
-import { twMerge } from 'tailwind-merge';
+import { Clock, AlertCircle, CheckCircle2, XCircle } from 'lucide-react';
 import { ConfidenceBar } from './ConfidenceBar';
 import { type Prediction } from '@/lib/api';
 import { format } from 'date-fns';

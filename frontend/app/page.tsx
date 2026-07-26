@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { api, type DailySummary, type Prediction, type AccumulatorSummary } from '@/lib/api';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { api, type DailySummary, type AccumulatorSummary } from '@/lib/api';
 import { LeagueGroup } from '@/components/LeagueGroup';
 import AccumulatorCard from '@/components/AccumulatorCard';
-import { formatMarket } from '@/lib/utils';
+import { formatMarket, groupAndSortByLeague, parseLocalDate } from '@/lib/utils';
 import {
   Trophy,
   Target,
@@ -57,16 +57,27 @@ export default function HomePage() {
 
   useEffect(() => {
     fetchData();
-    // Background refresh every 5 minutes (just reads from DB, doesn't trigger AI)
-    const interval = setInterval(() => fetchData(true), 5 * 60 * 1000);
-    return () => clearInterval(interval);
+    // Background refresh every 5 minutes (just reads from DB, doesn't trigger AI).
+    // Skip while the tab is hidden so we don't wake Neon / burn requests for
+    // backgrounded tabs; refetch immediately when the tab becomes visible again.
+    const interval = setInterval(() => {
+      if (!document.hidden) fetchData(true);
+    }, 5 * 60 * 1000);
+    const onVisible = () => {
+      if (!document.hidden) fetchData(true);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [fetchData]);
 
   if (loading && !data) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <RefreshCcw className="animate-spin text-primary" size={40} />
-        <p className="text-muted-foreground animate-pulse">Analyzing today's matches...</p>
+        <p className="text-muted-foreground animate-pulse">Loading today's predictions...</p>
       </div>
     );
   }
@@ -87,38 +98,18 @@ export default function HomePage() {
     );
   }
 
-  const predictions = data?.predictions || [];
-  const avgConfidence = predictions.length > 0
+  const predictions = useMemo(() => data?.predictions || [], [data]);
+
+  const avgConfidence = useMemo(() => predictions.length > 0
     ? Math.round(predictions.reduce((acc, p) => acc + p.confidence, 0) / predictions.length)
-    : 0;
+    : 0, [predictions]);
 
-  // Group by league
-  const groupedPredictions = predictions.reduce((acc, p) => {
-    if (!acc[p.league]) acc[p.league] = [];
-    acc[p.league].push(p);
-    return acc;
-  }, {} as Record<string, Prediction[]>);
+  const sortedLeagueEntries = useMemo(() => groupAndSortByLeague(predictions), [predictions]);
 
-  // Sort leagues with top ones first
-  const LEAGUE_PRIORITY = [
-    'Premier League', 'Champions League', 'La Liga', 'Serie A',
-    'Bundesliga', 'Ligue 1', 'Europa League'
-  ];
-
-  const sortedLeagueEntries = Object.entries(groupedPredictions).sort(([leagueA], [leagueB]) => {
-    const idxA = LEAGUE_PRIORITY.findIndex(l => leagueA.toLowerCase().includes(l.toLowerCase()));
-    const idxB = LEAGUE_PRIORITY.findIndex(l => leagueB.toLowerCase().includes(l.toLowerCase()));
-
-    if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-    if (idxA !== -1) return -1;
-    if (idxB !== -1) return 1;
-    return leagueA.localeCompare(leagueB);
-  });
-
-  const marketsCount = predictions.reduce((acc, p) => {
+  const marketsCount = useMemo(() => predictions.reduce((acc, p) => {
     acc[p.market] = (acc[p.market] || 0) + 1;
     return acc;
-  }, {} as Record<string, number>);
+  }, {} as Record<string, number>), [predictions]);
 
   return (
     <div className="space-y-8 sm:space-y-14">
@@ -151,7 +142,7 @@ export default function HomePage() {
         <AccumulatorCard
           predictions={accumulator.predictions}
           totalOdds={accumulator.total_odds}
-          date={format(new Date(accumulator.date), 'MMMM do')}
+          date={format(parseLocalDate(accumulator.date), 'MMMM do')}
         />
       )}
 
@@ -194,7 +185,7 @@ export default function HomePage() {
         <div className="text-center py-20 glass-card">
           <RefreshCcw size={48} className="mx-auto text-primary/20 mb-4" />
           <h3 className="text-xl font-bold">No predictions yet today</h3>
-          <p className="text-muted-foreground">Hang on tight!.</p>
+          <p className="text-muted-foreground">Today's picks are generated around 07:00 UTC — check back soon.</p>
         </div>
       )}
     </div>

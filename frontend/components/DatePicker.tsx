@@ -1,13 +1,8 @@
 'use client';
 
-import { format, subDays, startOfDay, isSameDay } from 'date-fns';
+import { format, subDays, addDays, isSameDay } from 'date-fns';
 import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-
-function cn(...inputs: ClassValue[]) {
-    return twMerge(clsx(inputs));
-}
+import { cn } from '@/lib/utils';
 
 interface DatePickerProps {
     selectedDate: Date;
@@ -28,6 +23,7 @@ export function DatePicker({ selectedDate, onChange }: DatePickerProps) {
                 <div className="flex items-center gap-2">
                     <button
                         onClick={() => onChange(subDays(selectedDate, 1))}
+                        aria-label="Previous day"
                         className="p-2 hover:bg-white/5 rounded-full transition-colors border border-white/5"
                     >
                         <ChevronLeft size={18} />
@@ -36,8 +32,9 @@ export function DatePicker({ selectedDate, onChange }: DatePickerProps) {
                         {isSameDay(selectedDate, new Date()) ? 'Today' : format(selectedDate, 'MMM do, yyyy')}
                     </span>
                     <button
-                        onClick={() => onChange(subDays(selectedDate, -1))}
+                        onClick={() => onChange(addDays(selectedDate, 1))}
                         disabled={isSameDay(selectedDate, new Date())}
+                        aria-label="Next day"
                         className="p-2 hover:bg-white/5 rounded-full transition-colors border border-white/5 disabled:opacity-20 disabled:cursor-not-allowed"
                     >
                         <ChevronRight size={18} />

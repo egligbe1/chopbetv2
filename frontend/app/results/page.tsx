@@ -1,27 +1,19 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { api, type DailySummary, type Prediction, type AccumulatorSummary } from '@/lib/api';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { api, type DailySummary, type AccumulatorSummary } from '@/lib/api';
 import { LeagueGroup } from '@/components/LeagueGroup';
 import AccumulatorCard from '@/components/AccumulatorCard';
 import { DatePicker } from '@/components/DatePicker';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { cn, groupAndSortByLeague } from '@/lib/utils';
 import {
     Calendar,
     CheckCircle2,
-    XCircle,
     Clock,
     Search,
-    ChevronLeft,
-    ChevronRight,
     TrendingUp
 } from 'lucide-react';
 import { format } from 'date-fns';
-
-function cn(...inputs: ClassValue[]) {
-    return twMerge(clsx(inputs));
-}
 
 export default function ResultsPage() {
     const [selectedDate, setSelectedDate] = useState<Date>(new Date());
@@ -29,8 +21,12 @@ export default function ResultsPage() {
     const [accumulator, setAccumulator] = useState<AccumulatorSummary | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    // Guards against out-of-order responses when the user switches dates quickly:
+    // only the most recently requested date is allowed to apply its result.
+    const latestRequest = useRef(0);
 
     const fetchResults = useCallback(async (date: Date) => {
+        const requestId = ++latestRequest.current;
         try {
             setLoading(true);
             const formattedDate = format(date, 'yyyy-MM-dd');
@@ -38,14 +34,16 @@ export default function ResultsPage() {
                 api.getPredictionsByDate(formattedDate),
                 api.getAccumulator('football', formattedDate).catch(() => null)
             ]);
+            if (requestId !== latestRequest.current) return; // a newer request superseded this one
             setData(results);
             setAccumulator(acca);
             setError(null);
         } catch (err: any) {
+            if (requestId !== latestRequest.current) return;
             console.error('Fetch error:', err);
             setError('Failed to load historical data.');
         } finally {
-            setLoading(false);
+            if (requestId === latestRequest.current) setLoading(false);
         }
     }, []);
 
@@ -53,30 +51,8 @@ export default function ResultsPage() {
         fetchResults(selectedDate);
     }, [selectedDate, fetchResults]);
 
-    const predictions = data?.predictions || [];
-
-    // Group by league
-    const groupedPredictions = predictions.reduce((acc, p) => {
-        if (!acc[p.league]) acc[p.league] = [];
-        acc[p.league].push(p);
-        return acc;
-    }, {} as Record<string, Prediction[]>);
-
-    // Sort leagues with top ones first
-    const LEAGUE_PRIORITY = [
-        'Premier League', 'Champions League', 'La Liga', 'Serie A',
-        'Bundesliga', 'Ligue 1', 'Europa League'
-    ];
-
-    const sortedLeagueEntries = Object.entries(groupedPredictions).sort(([leagueA], [leagueB]) => {
-        const idxA = LEAGUE_PRIORITY.findIndex(l => leagueA.toLowerCase().includes(l.toLowerCase()));
-        const idxB = LEAGUE_PRIORITY.findIndex(l => leagueB.toLowerCase().includes(l.toLowerCase()));
-
-        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-        if (idxA !== -1) return -1;
-        if (idxB !== -1) return 1;
-        return leagueA.localeCompare(leagueB);
-    });
+    const predictions = useMemo(() => data?.predictions || [], [data]);
+    const sortedLeagueEntries = useMemo(() => groupAndSortByLeague(predictions), [predictions]);
 
     return (
         <div className="space-y-8 sm:space-y-10">

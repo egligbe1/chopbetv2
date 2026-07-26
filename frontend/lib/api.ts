@@ -93,15 +93,28 @@ export interface DailyChartData {
   by_market: any;
 }
 
+class ApiError extends Error {
+  status?: number;
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 class ApiClient {
   private async request<T>(endpoint: string, options: RequestInit = {}, retries = 0): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;
 
+    const method = (options.method || 'GET').toUpperCase();
     const isEngineTrigger = endpoint.includes('trigger-predictions') || endpoint.includes('trigger-results');
     // 5 minutes for engine jobs, 60 seconds for regular requests (Neon DB can have cold starts)
     const timeoutMs = isEngineTrigger ? 300000 : 60000;
-    // Allow up to 2 retries for regular requests but not for engine triggers
-    const maxRetries = isEngineTrigger ? 0 : 2;
+    // Only auto-retry idempotent GETs on transient network/timeout errors.
+    // Never retry mutating POSTs (login, reset-password, clear-pending) or engine triggers —
+    // a timeout-then-success race could double-apply a side effect.
+    const isRetryable = method === 'GET' && !isEngineTrigger;
+    const maxRetries = isRetryable ? 2 : 0;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -118,13 +131,18 @@ class ApiClient {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `API error: ${response.status}`);
+        // A definite HTTP response (4xx/5xx) is not a transient failure — surface it
+        // immediately with its status instead of retrying.
+        throw new ApiError(errorData.detail || `API error: ${response.status}`, response.status);
       }
 
       return await response.json();
     } catch (error: any) {
+      // Do not retry deliberate HTTP error responses.
+      if (error instanceof ApiError) {
+        throw error;
+      }
       if (error.name === 'AbortError') {
-        // Retry on timeout for regular requests
         if (retries < maxRetries) {
           console.warn(`Request to ${endpoint} timed out, retrying (${retries + 1}/${maxRetries})...`);
           await new Promise(resolve => setTimeout(resolve, 2000));
@@ -132,8 +150,8 @@ class ApiClient {
         }
         throw new Error(`The request timed out. ${isEngineTrigger ? 'The AI Engine is taking a long time but implies it is still processing.' : 'Please try again.'}`);
       }
-      // Also retry on network errors for regular requests
-      if (retries < maxRetries && !isEngineTrigger) {
+      // Genuine network error — retry idempotent GETs only.
+      if (retries < maxRetries) {
         console.warn(`Request to ${endpoint} failed, retrying (${retries + 1}/${maxRetries})...`);
         await new Promise(resolve => setTimeout(resolve, 2000));
         return this.request<T>(endpoint, options, retries + 1);
