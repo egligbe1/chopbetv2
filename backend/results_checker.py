@@ -22,6 +22,44 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 FALLBACK_GEMINI_API_KEY = os.getenv("FALLBACK_GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
+def _extract_relevant_text(text: str, matches: list, window: int = 500, cap: int = 60000) -> str:
+    """
+    Pull the slices of a long results page that actually mention our matches.
+
+    The BBC page is ~850k chars with fixtures ordered by competition, so blindly
+    taking the first N chars drops everything below the top leagues (e.g. a
+    Brazilian result at char ~43k). Instead, find each team name and keep a
+    window of text around every occurrence, so the score reaches Gemini no
+    matter where on the page it sits.
+    """
+    if not text:
+        return ""
+    lower = text.lower()
+    spans = []
+    for m in matches:
+        for team in str(m).lower().split(" vs "):
+            team = team.strip()
+            if len(team) < 3:
+                continue
+            idx = lower.find(team)
+            found = 0
+            while idx != -1 and found < 4:
+                spans.append((max(0, idx - window), min(len(text), idx + window)))
+                idx = lower.find(team, idx + 1)
+                found += 1
+    if not spans:
+        return text[:15000]  # fallback: nothing matched, send the top of the page
+    # Merge overlapping / adjacent windows
+    spans.sort()
+    merged = [list(spans[0])]
+    for s, e in spans[1:]:
+        if s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    return "\n...\n".join(text[s:e] for s, e in merged)[:cap]
+
+
 def batch_check_results(date_str: str, matches: list) -> dict:
     """
     Sends the BBC text for a specific date to Gemini to retrieve
@@ -31,10 +69,18 @@ def batch_check_results(date_str: str, matches: list) -> dict:
     bbc_text = search_utils.get_bbc_fixtures(date_str) or ""
     goal_text = search_utils.get_goal_fixtures(date_str) or ""
     espn_text = search_utils.get_espn_fixtures(date_str) or ""
-    
-    combined_text = bbc_text[:15000] + "\n\n---\n\n" + goal_text[:15000] + "\n\n---\n\n" + espn_text[:15000]
-    
-    if len(combined_text) < 100:
+
+    normalized_for_search = [_normalize_match(m) for m in matches]
+
+    # Extract only the page slices that mention our matches (works regardless of
+    # where on the page they appear) instead of truncating to the first N chars.
+    bbc_rel = _extract_relevant_text(bbc_text, normalized_for_search)
+    goal_rel = _extract_relevant_text(goal_text, normalized_for_search)
+    espn_rel = _extract_relevant_text(espn_text, normalized_for_search)
+
+    combined_text = bbc_rel + "\n\n---\n\n" + goal_rel + "\n\n---\n\n" + espn_rel
+
+    if len(combined_text.strip()) < 100:
         logger.error(f"Failed to fetch results text for {date_str}.")
         return {}
 

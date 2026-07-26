@@ -27,19 +27,23 @@ def start_scheduler():
     )
 
 
-    # 11:00 PM UTC: Run football results checker
+    # Every 4 hours: run the football results checker. A single daily run missed
+    # late-finishing fixtures (e.g. Brazilian Serie A kicks off ~22:30 UTC and
+    # finishes after a 23:00 check), leaving them pending for ~24h. Running at
+    # 00/04/08/12/16/20 UTC settles any finished match within a few hours. The
+    # checker only touches still-pending predictions, so extra runs are cheap.
     scheduler.add_job(
         check_results,
-        trigger=CronTrigger(hour=23, minute=0, timezone="UTC"),
+        trigger=CronTrigger(hour="0,4,8,12,16,20", minute=0, timezone="UTC"),
         id="results_job_football",
-        name="Check Daily Football Results",
+        name="Check Football Results (every 4h)",
         replace_existing=True,
         **job_guards
     )
-    
-    
+
+
     scheduler.start()
-    logger.info("Scheduler started with daily jobs: football predictions at 07:00 UTC, football results at 23:00 UTC.")
+    logger.info("Scheduler started: football predictions at 07:00 UTC, results check every 4h (00/04/08/12/16/20 UTC).")
 
 def shutdown_scheduler():
     """Shuts down the scheduler."""
