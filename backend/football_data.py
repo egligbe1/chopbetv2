@@ -138,7 +138,11 @@ class FootballDataClient:
 
     # ── standings: one call per competition gives form + position for all ────
     def get_standings_map(self, competition_code: str) -> dict:
-        """Return {norm_team_name: row} for a competition, merging all group tables."""
+        """
+        Return {norm_team_name: {"TOTAL": row, "HOME": row, "AWAY": row}} for a
+        competition. The single standings call already includes the home/away
+        split tables — capturing them costs no extra requests.
+        """
         if not self.enabled or not competition_code:
             return {}
         if competition_code in self._standings_cache:
@@ -148,12 +152,13 @@ class FootballDataClient:
         table_map: dict = {}
         if data and "standings" in data:
             for block in data["standings"]:
-                if block.get("type") != "TOTAL":
+                block_type = block.get("type")
+                if block_type not in ("TOTAL", "HOME", "AWAY"):
                     continue
                 for row in block.get("table", []):
                     name = row.get("team", {}).get("name", "")
                     if name:
-                        table_map[normalize_team(name)] = row
+                        table_map.setdefault(normalize_team(name), {})[block_type] = row
         self._standings_cache[competition_code] = table_map
         return table_map
 
@@ -186,24 +191,40 @@ class FootballDataClient:
         comp_code = comp.get("code", "")
         standings = self.get_standings_map(comp_code)
 
-        home_row = standings.get(normalize_team(home)) or standings.get(normalize_team(match.get("homeTeam", {}).get("name", "")))
-        away_row = standings.get(normalize_team(away)) or standings.get(normalize_team(match.get("awayTeam", {}).get("name", "")))
+        home_entry = standings.get(normalize_team(home)) or standings.get(normalize_team(match.get("homeTeam", {}).get("name", "")))
+        away_entry = standings.get(normalize_team(away)) or standings.get(normalize_team(match.get("awayTeam", {}).get("name", "")))
 
         lines = [f"Competition: {comp.get('name', comp_code)}"]
 
-        def _describe(label: str, row: dict | None) -> str:
+        def _overall(label: str, row: dict | None) -> str:
             if not row:
                 return f"{label}: no standings data."
             return (
-                f"{label}: P{row.get('position','?')} in table, "
-                f"{row.get('points','?')} pts from {row.get('playedGames','?')} games "
+                f"{label}: P{row.get('position','?')} overall, "
+                f"{row.get('points','?')} pts / {row.get('playedGames','?')} games "
                 f"(W{row.get('won','?')} D{row.get('draw','?')} L{row.get('lost','?')}), "
-                f"GF {row.get('goalsFor','?')} / GA {row.get('goalsAgainst','?')}, "
-                f"recent form: {row.get('form') or 'n/a'}"
+                f"GF {row.get('goalsFor','?')} GA {row.get('goalsAgainst','?')}, "
+                f"form: {row.get('form') or 'n/a'}"
             )
 
-        lines.append(_describe(f"{home} (home)", home_row))
-        lines.append(_describe(f"{away} (away)", away_row))
+        def _split(label: str, row: dict | None) -> str | None:
+            if not row:
+                return None
+            gp = row.get("playedGames", "?")
+            return (
+                f"{label}: W{row.get('won','?')} D{row.get('draw','?')} L{row.get('lost','?')} "
+                f"in {gp} games, GF {row.get('goalsFor','?')} GA {row.get('goalsAgainst','?')}"
+            )
+
+        # Home team: overall + its HOME-only record. Away team: overall + AWAY-only.
+        lines.append(_overall(f"{home} (home side)", (home_entry or {}).get("TOTAL")))
+        home_split = _split(f"  -> {home} at HOME", (home_entry or {}).get("HOME"))
+        if home_split:
+            lines.append(home_split)
+        lines.append(_overall(f"{away} (away side)", (away_entry or {}).get("TOTAL")))
+        away_split = _split(f"  -> {away} AWAY", (away_entry or {}).get("AWAY"))
+        if away_split:
+            lines.append(away_split)
 
         h2h = self.get_h2h_summary(match.get("id"))
         if h2h and h2h.get("num_matches"):
@@ -215,7 +236,8 @@ class FootballDataClient:
             )
 
         # Only worth returning if we actually got some standings signal.
-        if not home_row and not away_row and not (h2h and h2h.get("num_matches")):
+        has_signal = (home_entry and home_entry.get("TOTAL")) or (away_entry and away_entry.get("TOTAL")) or (h2h and h2h.get("num_matches"))
+        if not has_signal:
             return None
         return "\n".join(lines)
 
