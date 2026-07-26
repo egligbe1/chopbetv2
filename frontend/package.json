@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
     "start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
-    "lint": "eslint"
+    "lint": "eslint",
+    "ui-check": "node scripts/ui-check.mjs"
   },
   "dependencies": {
     "@next/third-parties": "^16.1.6",
@@ -26,6 +27,7 @@
     "@types/react-dom": "^19.0.0",
     "eslint": "^9.0.0",
     "eslint-config-next": "15.1.7",
+    "playwright-core": "^1.49.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.0.0"
   }
