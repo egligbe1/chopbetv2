@@ -1,9 +1,10 @@
 """
-ChopBet Gemini Prediction Engine (v6 — Data-Driven with FBref Stats)
+ChopBet Gemini Prediction Engine (v7 — Data-Driven with football-data.org stats)
 
 Pipeline:
-  Phase 1  →  Extract raw fixtures from BBC/Goal.com text (Gemini)
-  Phase 2  →  Enrich each fixture with real team stats from FBref
+  Phase 1  →  Extract raw fixtures from BBC text (Gemini)
+  Phase 2  →  Enrich each fixture with real recency stats from football-data.org
+              (last-5 form, table position, goals, H2H); BBC preview as fallback
   Phase 3  →  Send enriched fixtures to Gemini for data-driven prediction
 
 No fixed count: the engine returns only strong, high-confidence single bets
@@ -22,6 +23,7 @@ from sqlalchemy import and_
 from database import SessionLocal
 from models import Prediction
 from search_utils import search_utils
+from football_data import football_data
 from cache import invalidate_cache
 from dotenv import load_dotenv
 
@@ -148,43 +150,72 @@ def extract_fixtures(raw_text: str, today_str: str) -> list[dict]:
 
 def enrich_with_stats(fixtures: list[dict], today_str: str) -> list[dict]:
     """
-    Phase 2: For each fixture, find its BBC match link and scrape preview stats
-    (H2H and Match Facts).
+    Phase 2: Enrich each fixture with REAL recency data.
+      - Primary: structured stats from football-data.org (last-5 form, table
+        position, goals for/against, head-to-head) for covered top leagues.
+      - Fallback/supplement: scraped BBC match-preview text (H2H / Match facts).
     """
-    logger.info(f"Phase 2: Enriching {len(fixtures)} fixtures with BBC match page stats...")
-    
-    # 1. Get all available match links for today
+    logger.info(f"Phase 2: Enriching {len(fixtures)} fixtures (football-data.org + BBC)...")
+
+    # Structured stats index for the day (one API call; empty when no key set).
+    fd_index = football_data.get_todays_match_index(today_str)
+
+    # BBC match links for preview scraping / source attribution.
     match_links = search_utils.get_bbc_match_links(today_str)
-    
+
+    fd_covered = 0
+    bbc_covered = 0
     enriched = []
     for fixture in fixtures:
-        home = fixture.get("home_team", "").lower().strip()
-        away = fixture.get("away_team", "").lower().strip()
-        
-        # 2. Match the extracted fixture to a BBC link
+        home_name = fixture.get("home_team", "")
+        away_name = fixture.get("away_team", "")
+        home = home_name.lower().strip()
+        away = away_name.lower().strip()
+
+        # 1. Structured stats (preferred, real recency).
+        fd_ctx = football_data.build_fixture_context(home_name, away_name, fd_index)
+
+        # 2. BBC match page (for source link + supplementary preview text).
         match_url = None
         for link_data in match_links:
             link_text = link_data["teams"].lower()
-            # Simple heuristic: if both home and away team names are in the link text
             if home in link_text and away in link_text:
                 match_url = link_data["url"]
                 break
-        
-        # 3. Scrape the match page if found
+
+        bbc_ctx = None
         if match_url:
-            logger.info(f"Scraping BBC stats for: {fixture['home_team']} vs {fixture['away_team']}")
-            fixture["search_context"] = search_utils.get_match_preview_stats(match_url)
+            bbc_ctx = search_utils.get_match_preview_stats(match_url)
             fixture["source_link"] = match_url
-            # Small delay to be polite to BBC
-            time.sleep(1)
+            time.sleep(1)  # be polite to BBC
         else:
-            logger.warning(f"No BBC match page found for {fixture['home_team']} vs {fixture['away_team']}")
-            fixture["search_context"] = None
             fixture["source_link"] = "https://www.bbc.com/sport/football"
+
+        # 3. Combine — structured stats lead, BBC preview supplements.
+        if fd_ctx and bbc_ctx:
+            fixture["search_context"] = (
+                f"STRUCTURED STATS (football-data.org):\n{fd_ctx}\n\n"
+                f"MATCH PREVIEW (BBC):\n{bbc_ctx}"
+            )
+        elif fd_ctx:
+            fixture["search_context"] = f"STRUCTURED STATS (football-data.org):\n{fd_ctx}"
+        else:
+            fixture["search_context"] = bbc_ctx
+
+        if fd_ctx:
+            fd_covered += 1
+        elif bbc_ctx:
+            bbc_covered += 1
+        else:
+            logger.warning(f"No stats found for {home_name} vs {away_name} (model knowledge only).")
 
         enriched.append(fixture)
 
-    logger.info(f"Phase 2 complete: Enriched {len(enriched)} fixtures.")
+    logger.info(
+        f"Phase 2 complete: {len(enriched)} fixtures — "
+        f"{fd_covered} with structured stats, {bbc_covered} BBC-only, "
+        f"{len(enriched) - fd_covered - bbc_covered} unenriched."
+    )
     return enriched
 
 
@@ -276,9 +307,15 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
     prompt = f"""
     You are an elite football betting analyst and data scientist. Today is {today_str}.
 
-    Below is a list of {num_fixtures} football fixtures for today. Most have been enriched with
-    REAL search snippets ("search_context") grabbed from recent match previews across the web.
-    These snippets contain clues about recent form, injuries, xG, and tactical points.
+    Below is a list of {num_fixtures} football fixtures for today. Many are enriched with a
+    "search_context" containing REAL data:
+      - STRUCTURED STATS (football-data.org): each team's league position, points, games
+        played, W/D/L, goals for/against, and recent form (a W/D/L string of their last
+        matches), plus head-to-head history. This is factual, current-season data — TRUST IT.
+      - MATCH PREVIEW (BBC): supplementary prose about injuries/form when available.
+
+    Base every pick on this real data. Where a fixture has NO search_context, be far more
+    conservative — you are relying on general knowledge and should usually skip it.
 
     FIXTURES AND SEARCH CONTEXT:
     {fixtures_text}
@@ -294,9 +331,12 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
     3. CRITICAL RULE: STRONGLY PRIORITIZE matches from the Top 8 European leagues (e.g., Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Primeira Liga, Eredivisie, Champions League, Europa League) if they are present in the list. The list is pre-sorted to show these top leagues first.
     4. CRITICAL RULE: You MUST select exactly ONE prediction per match. NEVER include the same
        match (same home_team vs away_team) more than once. Pick the single best, safest market for each match.
-    5. For each pick, base your reasoning EXPLICITLY on the search snippets provided:
-       - Reference actual form mentions, specific player injuries, or stats highlighted.
-       - Example reasoning: "Search snippets indicate Arsenal has won 4 of their last 5, while Chelsea is missing their starting CB due to injury."
+    5. For each pick, base your reasoning EXPLICITLY on the real data provided:
+       - Cite concrete numbers: league position, recent form (W/D/L), goals for/against,
+         and head-to-head record from the structured stats; add injury/tactical notes from
+         the BBC preview when present.
+       - Example reasoning: "Arsenal (2nd, form WWWDW, 22 GF) host Everton (17th, form LLDLD);
+         H2H shows Arsenal winning 4 of the last 5 — Over 1.5 and a home lean look strong."
     6. STRONGLY PRIORITIZE SAFER MARKETS over straight wins. Straight wins (1X2) are highly volatile.
        Instead, seek out high-probability outcomes like:
        - Double Chance (1X or X2)
