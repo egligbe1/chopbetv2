@@ -202,6 +202,7 @@ def enrich_with_stats(fixtures: list[dict], today_str: str) -> list[dict]:
         else:
             fixture["search_context"] = bbc_ctx
 
+        fixture["has_structured_stats"] = bool(fd_ctx)
         if fd_ctx:
             fd_covered += 1
         elif bbc_ctx:
@@ -281,7 +282,12 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
                 return True
         return False
 
-    enriched_fixtures.sort(key=lambda f: 0 if _is_top_league(f.get("league", "")) else 1)
+    # Primary sort: matches WITH real structured stats first (we can only make
+    # data-backed sure bets on those). Secondary: top European leagues.
+    enriched_fixtures.sort(key=lambda f: (
+        0 if f.get("has_structured_stats") else 1,
+        0 if _is_top_league(f.get("league", "")) else 1,
+    ))
 
     # Build a compact JSON representation of fixtures + search context for the prompt
     fixtures_json = []
@@ -292,6 +298,7 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
             "league": f.get("league"),
             "country": f.get("country"),
             "kickoff_time": f.get("kickoff_time"),
+            "verified_data": bool(f.get("has_structured_stats")),
         }
         if f.get("search_context"):
             entry["search_context"] = f["search_context"]
@@ -314,8 +321,14 @@ def predict_with_stats(enriched_fixtures: list[dict], today_str: str) -> list[di
         matches), plus head-to-head history. This is factual, current-season data — TRUST IT.
       - MATCH PREVIEW (BBC): supplementary prose about injuries/form when available.
 
-    Base every pick on this real data. Where a fixture has NO search_context, be far more
-    conservative — you are relying on general knowledge and should usually skip it.
+    Each fixture has a "verified_data" flag:
+      - verified_data = true  → we have REAL current-season stats for this match. These are
+        your primary hunting ground for sure bets. Strongly prefer selecting from these.
+      - verified_data = false → NO reliable stats (lower/uncovered league). You are relying
+        on general knowledge only. Be very conservative and usually SKIP these; include one
+        only if it is an exceptionally obvious, well-known mismatch.
+
+    Base every pick on the real data provided.
 
     FIXTURES AND SEARCH CONTEXT:
     {fixtures_text}
