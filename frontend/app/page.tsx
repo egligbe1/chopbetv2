@@ -73,6 +73,22 @@ export default function HomePage() {
     };
   }, [fetchData]);
 
+  // NOTE: all hooks (incl. these useMemos) MUST run before any early return
+  // below, or the loading/error returns would change the hook count between
+  // renders and crash with React error #310.
+  const predictions = useMemo(() => data?.predictions || [], [data]);
+
+  const avgConfidence = useMemo(() => predictions.length > 0
+    ? Math.round(predictions.reduce((acc, p) => acc + p.confidence, 0) / predictions.length)
+    : 0, [predictions]);
+
+  const sortedLeagueEntries = useMemo(() => groupAndSortByLeague(predictions), [predictions]);
+
+  const marketsCount = useMemo(() => predictions.reduce((acc, p) => {
+    acc[p.market] = (acc[p.market] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>), [predictions]);
+
   if (loading && !data) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
@@ -97,19 +113,6 @@ export default function HomePage() {
       </div>
     );
   }
-
-  const predictions = useMemo(() => data?.predictions || [], [data]);
-
-  const avgConfidence = useMemo(() => predictions.length > 0
-    ? Math.round(predictions.reduce((acc, p) => acc + p.confidence, 0) / predictions.length)
-    : 0, [predictions]);
-
-  const sortedLeagueEntries = useMemo(() => groupAndSortByLeague(predictions), [predictions]);
-
-  const marketsCount = useMemo(() => predictions.reduce((acc, p) => {
-    acc[p.market] = (acc[p.market] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>), [predictions]);
 
   return (
     <div className="space-y-8 sm:space-y-14">
