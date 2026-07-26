@@ -112,11 +112,13 @@ def main() -> None:
         print("CRON_SECRET is not set — the cron endpoints would reject QStash. Set it first. Aborting.")
         sys.exit(1)
 
-    # Remove the old always-on keep-warm schedule (kept the service awake 24/7).
+    # Remove ONLY this backend's old always-on keep-warm schedule. Match the
+    # exact URL — never a bare "/health" suffix, which would also match other
+    # projects' keep-warm schedules in the same QStash account.
+    keepwarm_url = f"{BACKEND_URL}/health"
     for s in existing:
-        dest = s.get("destination", "")
-        if dest.endswith("/health"):
-            delete_schedule(s["scheduleId"], "old keep-warm /health")
+        if s.get("destination") == keepwarm_url:
+            delete_schedule(s["scheduleId"], "old keep-warm")
 
     # Create the cron trigger schedules (idempotent: skip if destination exists).
     existing_dests = {s.get("destination") for s in existing}
